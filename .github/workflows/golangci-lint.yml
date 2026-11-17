@@ -1,0 +1,56 @@
+name: golangci-lint
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "release/*"
+  pull_request:
+    branches:
+      - main
+      - "feat/**"
+      - "release/*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golangci:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out adapter
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out go-naming-polarismesh
+        uses: actions/checkout@v4
+        with:
+          repository: trpc-ecosystem/go-naming-polarismesh
+          ref: ${{ github.head_ref || github.ref_name }}
+          path: go-naming-polarismesh
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Use matching naming dependency branch
+        run: |
+          go mod edit -replace=trpc.group/trpc-go/trpc-naming-polarismesh=./go-naming-polarismesh
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          args: --timeout=30m

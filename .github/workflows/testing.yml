@@ -1,0 +1,95 @@
+name: Testing
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "release/*"
+  pull_request:
+    branches:
+      - main
+      - "feat/**"
+      - "release/*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testing-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out adapter
+        uses: actions/checkout@v4
+
+      - name: Check out go-naming-polarismesh
+        uses: actions/checkout@v4
+        with:
+          repository: trpc-ecosystem/go-naming-polarismesh
+          ref: ${{ github.head_ref || github.ref_name }}
+          path: go-naming-polarismesh
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Use matching naming dependency branch
+        run: |
+          go mod edit -replace=trpc.group/trpc-go/trpc-naming-polarismesh=./go-naming-polarismesh
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify module files
+        run: go mod tidy -diff
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test with race detector and coverage
+        run: |
+          go test -race -count=1 -timeout=15m \
+            -covermode=atomic \
+            -coverprofile=coverage.txt \
+            ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build remote E2E package
+        run: |
+          ./examples/ai-registry/cloud/build-package.sh \
+            --output-dir /tmp/go-agent-cloud-dist \
+            --build-root /tmp/go-agent-cloud-build
+
+      - name: Validate example scripts
+        run: |
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find examples -type f -name '*.sh' -print)
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: ./coverage.txt
+          flags: adapter
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload cloud package
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-agent-naming-polarismesh-cloud
+          path: |
+            /tmp/go-agent-cloud-dist/*.tar.gz
+            /tmp/go-agent-cloud-dist/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
