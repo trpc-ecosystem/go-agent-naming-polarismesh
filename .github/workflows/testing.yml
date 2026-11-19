@@ -43,7 +43,7 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test with race detector and coverage
+      - name: Run unit tests with race detector and coverage
         run: |
           go test -race -count=1 -timeout=15m \
             -covermode=atomic \
@@ -52,12 +52,6 @@ jobs:
 
       - name: Vet
         run: go vet ./...
-
-      - name: Build remote E2E package
-        run: |
-          ./integration/ai-registry/cloud/build-package.sh \
-            --output-dir /tmp/go-agent-cloud-dist \
-            --build-root /tmp/go-agent-cloud-build
 
       - name: Validate example and integration scripts
         run: |
@@ -74,13 +68,3 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-      - name: Upload cloud package
-        uses: actions/upload-artifact@v4
-        with:
-          name: go-agent-naming-polarismesh-cloud
-          path: |
-            /tmp/go-agent-cloud-dist/*.tar.gz
-            /tmp/go-agent-cloud-dist/*.tar.gz.sha256
-          if-no-files-found: error
-          retention-days: 7
