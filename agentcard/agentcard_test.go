@@ -45,8 +45,6 @@ func TestNewAgentCardUsesThreeKeyMetadata(t *testing.T) {
 			require.Len(t, metadata, 3)
 			require.Equal(t, config.ServiceName, metadata[MetadataAgentName])
 			require.Equal(t, "1.0", metadata[MetadataA2AVersion])
-			require.NotContains(t, metadata, MetadataLegacyTransport)
-			require.NotContains(t, metadata, MetadataLegacyPath)
 
 			parsed, parsedCard, err := ParseAgentInstanceMetadata(metadata)
 			require.NoError(t, err)
@@ -142,11 +140,11 @@ func TestValidateAgentInstanceMetadataRejectsInvalidCards(t *testing.T) {
 		},
 		"unknown version": func(value map[string]string) { value[MetadataA2AVersion] = "2.0" },
 		"name mismatch":   func(value map[string]string) { value[MetadataAgentName] = "other-agent" },
-		"legacy key": func(value map[string]string) {
-			value[MetadataLegacyTransport] = "JSONRPC"
-		},
 		"credential key": func(value map[string]string) {
 			value["authorization"] = "bearer value"
+		},
+		"unexpected key": func(value map[string]string) {
+			value["extra"] = "value"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -155,6 +153,25 @@ func TestValidateAgentInstanceMetadataRejectsInvalidCards(t *testing.T) {
 			require.Error(t, ValidateAgentInstanceMetadata(copied))
 		})
 	}
+}
+
+func TestValidateAgentInstanceMetadataAllowsPromotedPlatformFields(t *testing.T) {
+	metadata := cardMetadata(t)
+	metadata["version"] = "1.0.0"
+	metadata["region"] = ""
+	metadata["zone"] = ""
+	metadata["campus"] = ""
+	metadata["internal-lastheartbeat"] = "1795058745"
+	metadata["internal-empty-protection"] = "true"
+
+	require.Len(t, metadata, 9)
+	require.NoError(t, ValidateAgentInstanceMetadata(metadata))
+
+	parsed, card, err := ParseAgentInstanceMetadata(metadata)
+	require.NoError(t, err)
+	require.Equal(t, SchemaVersionV10, parsed.A2AVersion)
+	require.Equal(t, metadata[MetadataAgentName], card.Name)
+	require.Equal(t, metadata[MetadataAgentCard], parsed.CardJSON)
 }
 
 func TestValidateAgentCardRejectsCredentialsAndNonHTTPSchemes(t *testing.T) {
@@ -171,25 +188,6 @@ func TestValidateAgentCardRejectsCredentialsAndNonHTTPSchemes(t *testing.T) {
 	require.NotContains(t, err.Error(), "review-user")
 	require.NotContains(t, err.Error(), "review-password")
 	require.NotContains(t, err.Error(), "review-secret")
-}
-
-func TestParseLegacyAgentMetadataFallback(t *testing.T) {
-	config := providerConfig()
-	card, err := NewAgentCard(config)
-	require.NoError(t, err)
-	raw, err := json.Marshal(card)
-	require.NoError(t, err)
-	metadata := map[string]string{
-		MetadataAgentName:       config.ServiceName,
-		MetadataLegacyAgentCard: string(raw),
-		MetadataLegacyTransport: "JSONRPC",
-		MetadataLegacyPath:      config.A2APath,
-	}
-	parsed, parsedCard, err := ParseAgentInstanceMetadata(metadata)
-	require.NoError(t, err)
-	require.Equal(t, "JSONRPC", parsed.Transport)
-	require.Equal(t, config.A2APath, parsed.Path)
-	require.Equal(t, config.ServiceName, parsedCard.Name)
 }
 
 func TestNewAgentCardAdvertisesTools(t *testing.T) {

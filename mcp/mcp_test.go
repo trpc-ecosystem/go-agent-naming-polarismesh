@@ -126,7 +126,7 @@ func TestGetContractUsesConsumerServiceRuleResponse(t *testing.T) {
 				GetServiceContractRequest: model.GetServiceContractRequest{
 					Namespace: config.Namespace,
 					Service:   config.Service,
-					Name:      config.Service,
+					Name:      mcpContractType,
 					Type:      mcpContractType,
 					Protocol:  string(config.Transport),
 					Version:   config.ServerVersion,
@@ -141,11 +141,12 @@ func TestGetContractUsesConsumerServiceRuleResponse(t *testing.T) {
 	require.Equal(t, "revision-1", response.Revision)
 	contract, ok := response.Value.(*model.ServiceContract)
 	require.True(t, ok)
-	require.Equal(t, config.Service, contract.Name)
+	require.Equal(t, mcpContractType, contract.Name)
 	require.Equal(t, mcpContractType, contract.Type)
 	require.NotNil(t, consumer.request)
 	require.Equal(t, config.Namespace, consumer.request.Namespace)
 	require.Equal(t, config.Service, consumer.request.Service)
+	require.Equal(t, mcpContractType, consumer.request.Name)
 	require.Equal(t, mcpContractType, consumer.request.Type)
 	require.Equal(t, string(config.Transport), consumer.request.Protocol)
 	require.Equal(t, config.ServerVersion, consumer.request.Version)
@@ -834,6 +835,14 @@ func (*fakeRegistrar) UnregisterMetadataProvider(string) {}
 type fakeConnector struct {
 	trpcmcp.Connector
 	onClose func()
+}
+
+func (*fakeConnector) ServerCapabilities() (trpcmcp.ServerCapabilities, bool) {
+	return trpcmcp.ServerCapabilities{
+		Tools:     &trpcmcp.ToolsCapability{ListChanged: true},
+		Resources: &trpcmcp.ResourcesCapability{ListChanged: true},
+		Prompts:   &trpcmcp.PromptsCapability{ListChanged: true},
+	}, true
 }
 
 func (*fakeConnector) Initialize(

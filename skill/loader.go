@@ -372,9 +372,6 @@ func (l *Loader) loadPublishedRefs(
 		if result == nil {
 			return nil, errors.New("list published Skills returned an empty result")
 		}
-		if len(result.Resources) == 0 {
-			break
-		}
 		for _, resource := range result.Resources {
 			if resource == nil || resource.VersionInfo == nil {
 				continue
@@ -396,10 +393,12 @@ func (l *Loader) loadPublishedRefs(
 				break
 			}
 		}
-		offset += uint32(len(result.Resources))
-		if result.Total != 0 && offset >= result.Total {
+		// Total counts the raw page; polaris-go filters unpublished resources.
+		// Advance by that raw window, including pages filtered to zero entries.
+		if result.Total <= offset || result.Total-offset <= uint32(limit) {
 			break
 		}
+		offset += uint32(limit)
 	}
 	refs := make([]loadedSkillRef, 0, len(byID))
 	for _, ref := range byID {

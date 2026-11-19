@@ -129,11 +129,9 @@ func BuildAgentInstanceRegistration(req AgentInstanceRegistrationRequest) (*Agen
 	}, nil
 }
 
-// BuildAgentInstanceRegistrationFromMetadata migrates static instance metadata
-// to a validated registration snapshot. New keys require ai-a2a-version; legacy
-// four-key input requires an explicit A2AVersion and never writes the old keys.
-// The card JSON bytes are preserved, so noncanonical signed cards must be
-// explicitly migrated by their author rather than rewritten here.
+// BuildAgentInstanceRegistrationFromMetadata converts canonical three-key
+// static instance metadata to a validated registration snapshot. The card JSON
+// bytes are preserved, so noncanonical signed cards are not rewritten here.
 func BuildAgentInstanceRegistrationFromMetadata(
 	req AgentInstanceRegistrationRequest,
 	metadata map[string]string,
@@ -141,36 +139,23 @@ func BuildAgentInstanceRegistrationFromMetadata(
 	if req.CardJSON != "" {
 		return nil, fmt.Errorf("CardJSON must not be supplied together with static metadata")
 	}
-	if _, exists := metadata[MetadataAgentCard]; exists {
-		if err := ValidateAgentInstanceMetadata(metadata); err != nil {
-			return nil, err
-		}
-		version := metadata[MetadataA2AVersion]
-		if req.A2AVersion != "" {
-			configured, err := NormalizeAgentCardSchemaVersion(req.A2AVersion)
-			if err != nil {
-				return nil, err
-			}
-			if configured != version {
-				return nil, fmt.Errorf("static AgentCard schema version does not match configured A2AVersion")
-			}
-		}
-		req.CardJSON, req.A2AVersion = metadata[MetadataAgentCard], version
-	} else {
-		if _, exists := metadata[MetadataA2AVersion]; exists {
-			return nil, fmt.Errorf("new AgentCard metadata requires %q", MetadataAgentCard)
-		}
-		if len(metadata) != 4 {
-			return nil, fmt.Errorf("legacy AgentCard registration requires exactly four metadata keys")
-		}
-		if req.A2AVersion == "" {
-			return nil, fmt.Errorf("legacy AgentCard registration requires an explicit A2AVersion")
-		}
-		if _, _, err := ParseAgentInstanceMetadata(metadata); err != nil {
-			return nil, err
-		}
-		req.CardJSON = metadata[MetadataLegacyAgentCard]
+	if _, exists := metadata[MetadataAgentCard]; !exists {
+		return nil, fmt.Errorf("AgentCard metadata requires %q", MetadataAgentCard)
 	}
+	if err := ValidateAgentInstanceMetadata(metadata); err != nil {
+		return nil, err
+	}
+	version := metadata[MetadataA2AVersion]
+	if req.A2AVersion != "" {
+		configured, err := NormalizeAgentCardSchemaVersion(req.A2AVersion)
+		if err != nil {
+			return nil, err
+		}
+		if configured != version {
+			return nil, fmt.Errorf("static AgentCard schema version does not match configured A2AVersion")
+		}
+	}
+	req.CardJSON, req.A2AVersion = metadata[MetadataAgentCard], version
 	if metadata[MetadataAgentName] != req.Service {
 		return nil, fmt.Errorf("agent metadata name must match registered service")
 	}

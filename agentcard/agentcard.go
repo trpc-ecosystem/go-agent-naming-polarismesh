@@ -38,15 +38,6 @@ const (
 	// MetadataA2AVersion is the AgentCard schema version metadata key.
 	MetadataA2AVersion = "ai-a2a-version"
 
-	// MetadataLegacyAgentCard is the deprecated four-key card metadata key.
-	MetadataLegacyAgentCard = "a2a.agent.card"
-	// MetadataLegacyTransport is the deprecated four-key transport metadata key.
-	MetadataLegacyTransport = "a2a.transport"
-	// MetadataLegacyPath is the deprecated four-key path metadata key.
-	MetadataLegacyPath = "a2a.path"
-
-	defaultTransport = "JSONRPC"
-
 	maxInstanceMetadataEntries = model.MaxInstanceMetadataEntries
 	maxMetadataValueCharacters = model.MaxMetadataValueRunes
 )
@@ -67,11 +58,6 @@ type AgentInstanceMetadata struct {
 	CardJSON   string
 	A2AVersion SchemaVersion
 	Card       a2aprotocolserver.AgentCard
-
-	// Deprecated: old four-key metadata is parsed only as a compatibility fallback.
-	Transport string
-	// Deprecated: old four-key metadata is parsed only as a compatibility fallback.
-	Path string
 }
 
 // CardDocument keeps a typed AgentCard and its source JSON. Keeping Raw is
@@ -295,22 +281,20 @@ func BuildAgentInstanceMetadataFromRaw(
 	return metadata, nil
 }
 
-// ValidateAgentInstanceMetadata validates the new three-key metadata.
+// ValidateAgentInstanceMetadata validates the three AgentCard keys. The SDK
+// also promotes structured instance fields into GetMetadata(), so platform
+// fields such as version and location are allowed but are not part of the
+// three-key contract.
 func ValidateAgentInstanceMetadata(metadata map[string]string) error {
-	if len(metadata) != 3 {
-		return errors.New("AgentCard instance metadata must contain exactly ai-agent-name, ai-agent-card and ai-a2a-version")
-	}
-	for _, legacy := range []string{
-		MetadataLegacyAgentCard,
-		MetadataLegacyTransport,
-		MetadataLegacyPath,
-	} {
-		if _, exists := metadata[legacy]; exists {
-			return errors.New("legacy AgentCard metadata is not valid for the new three-key contract")
-		}
-	}
 	if err := validateMetadataValues(metadata); err != nil {
 		return err
+	}
+	for key := range metadata {
+		if key == MetadataAgentName || key == MetadataAgentCard || key == MetadataA2AVersion ||
+			isPromotedInstanceMetadataKey(key) {
+			continue
+		}
+		return fmt.Errorf("instance metadata contains unsupported key %q", key)
 	}
 	agentName := strings.TrimSpace(metadata[MetadataAgentName])
 	if agentName == "" {
@@ -343,57 +327,46 @@ func ValidateAgentInstanceMetadata(metadata map[string]string) error {
 	return nil
 }
 
-// ParseAgentInstanceMetadata decodes new three-key metadata first and accepts
-// old four-key metadata only as a compatibility fallback.
+// isPromotedInstanceMetadataKey reports structured instance fields that
+// polaris-go promotes into Instance.GetMetadata().
+func isPromotedInstanceMetadataKey(key string) bool {
+	switch key {
+	case "version", "region", "zone", "campus",
+		"internal-lastheartbeat", "internal-empty-protection":
+		return true
+	default:
+		return false
+	}
+}
+
+// ParseAgentInstanceMetadata decodes the canonical three-key metadata.
 func ParseAgentInstanceMetadata(
 	metadata map[string]string,
 ) (AgentInstanceMetadata, a2aprotocolserver.AgentCard, error) {
-	_, hasVersion := metadata[MetadataA2AVersion]
-	_, hasCard := metadata[MetadataAgentCard]
-	if hasVersion || hasCard {
-		if err := ValidateAgentInstanceMetadata(metadata); err != nil {
-			return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
-		}
-		version := SchemaVersion(metadata[MetadataA2AVersion])
-		cardJSON := []byte(metadata[MetadataAgentCard])
-		document, err := parseDocumentWithoutConfig(version, cardJSON)
-		if err != nil {
-			return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
-		}
-		parsed, err := ParseAgentCardByVersion(string(cardJSON), string(version))
-		if err != nil {
-			return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
-		}
-		document.Card = a2aCardFromParsed(parsed)
-		return AgentInstanceMetadata{
-			AgentName:  metadata[MetadataAgentName],
-			CardJSON:   metadata[MetadataAgentCard],
-			A2AVersion: version,
-			Card:       document.Card,
-		}, document.Card, nil
+	if err := ValidateAgentInstanceMetadata(metadata); err != nil {
+		return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
 	}
-	return parseLegacyAgentInstanceMetadata(metadata)
-}
-
-func a2aCardFromParsed(card *AgentCard) a2aprotocolserver.AgentCard {
-	result := a2aprotocolserver.AgentCard{
-		Name:                card.Name,
-		Description:         card.Description,
-		Version:             card.Version,
-		URL:                 card.URL,
-		PreferredTransport:  stringPointer(card.PreferredTransport),
-		ProtocolVersion:     stringPointer(card.ProtocolVersion),
-		DefaultInputModes:   card.DefaultInputModes,
-		DefaultOutputModes:  card.DefaultOutputModes,
-		SupportedInterfaces: a2aInterfacesFromParsed(card.Interfaces()),
+	version := SchemaVersion(metadata[MetadataA2AVersion])
+	cardJSON := []byte(metadata[MetadataAgentCard])
+	document, err := parseDocumentWithoutConfig(version, cardJSON)
+	if err != nil {
+		return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
 	}
-	if result.PreferredTransport != nil && *result.PreferredTransport == "" {
-		result.PreferredTransport = nil
+	parsed, err := ParseAgentCardByVersion(string(cardJSON), string(version))
+	if err != nil {
+		return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
 	}
-	if result.ProtocolVersion != nil && *result.ProtocolVersion == "" {
-		result.ProtocolVersion = nil
-	}
-	return result
+	// Keep the complete typed document; only normalize the endpoint fields.
+	document.Card.URL = parsed.URL
+	document.Card.PreferredTransport = stringPointer(parsed.PreferredTransport)
+	document.Card.ProtocolVersion = stringPointer(parsed.ProtocolVersion)
+	document.Card.SupportedInterfaces = a2aInterfacesFromParsed(parsed.Interfaces())
+	return AgentInstanceMetadata{
+		AgentName:  metadata[MetadataAgentName],
+		CardJSON:   metadata[MetadataAgentCard],
+		A2AVersion: version,
+		Card:       document.Card,
+	}, document.Card, nil
 }
 
 func a2aInterfacesFromParsed(
@@ -514,7 +487,10 @@ func consumableProtocolVersion(version string, a2aVersion SchemaVersion) bool {
 	}
 	major, majorErr := strconv.Atoi(parts[0])
 	minor, minorErr := strconv.Atoi(parts[1])
-	if majorErr != nil || minorErr != nil || len(parts) == 3 {
+	if majorErr != nil || minorErr != nil {
+		return false
+	}
+	if len(parts) == 3 {
 		if _, patchErr := strconv.ParseUint(parts[2], 10, 32); patchErr != nil {
 			return false
 		}
@@ -529,46 +505,6 @@ func Endpoint(item a2aprotocol.AgentInterface) (string, error) {
 		return "", err
 	}
 	return parsed.String(), nil
-}
-
-func parseLegacyAgentInstanceMetadata(
-	metadata map[string]string,
-) (AgentInstanceMetadata, a2aprotocolserver.AgentCard, error) {
-	agentName := strings.TrimSpace(metadata[MetadataAgentName])
-	cardJSON := metadata[MetadataLegacyAgentCard]
-	transport := strings.ToUpper(strings.TrimSpace(metadata[MetadataLegacyTransport]))
-	configuredPath := strings.TrimSpace(metadata[MetadataLegacyPath])
-	if agentName == "" || strings.TrimSpace(cardJSON) == "" {
-		return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, errors.New("legacy AgentCard metadata is incomplete")
-	}
-	if err := a2apath.Validate(configuredPath); err != nil {
-		return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
-	}
-	var card a2aprotocolserver.AgentCard
-	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
-		return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, err
-	}
-	card.NormalizeInterfaces()
-	if card.Name != agentName {
-		return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, errors.New("legacy AgentCard name mismatch")
-	}
-	if transport == "" {
-		transport = defaultTransport
-	}
-	for _, item := range card.SupportedInterfaces {
-		if strings.EqualFold(item.ProtocolBinding, transport) ||
-			(transport == "HTTP+JSON" &&
-				strings.EqualFold(item.ProtocolBinding, a2aprotocol.ProtocolBindingHTTPJSON)) {
-			return AgentInstanceMetadata{
-				AgentName: agentName,
-				CardJSON:  cardJSON,
-				Transport: transport,
-				Path:      configuredPath,
-				Card:      card,
-			}, card, nil
-		}
-	}
-	return AgentInstanceMetadata{}, a2aprotocolserver.AgentCard{}, errors.New("legacy AgentCard transport mismatch")
 }
 
 func parseDocumentWithoutConfig(version SchemaVersion, raw []byte) (CardDocument, error) {

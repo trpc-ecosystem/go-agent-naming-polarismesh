@@ -31,7 +31,6 @@ import (
 	"trpc.group/trpc-go/trpc-agent-naming-polarismesh/internal/registration"
 	adapternaming "trpc.group/trpc-go/trpc-agent-naming-polarismesh/naming"
 	adapterskill "trpc.group/trpc-go/trpc-agent-naming-polarismesh/skill"
-	"trpc.group/trpc-go/trpc-go/log"
 )
 
 type runtimeState uint8
@@ -73,7 +72,6 @@ type Runtime struct {
 	consumerAPI        adapternaming.InstanceLister
 	configuredCard     *a2aprotocolserver.AgentCard
 	configuredCardJSON []byte
-	legacyMetadata     bool
 	cardBuilder        AgentCardBuilder
 	cardTools          []tool.Tool
 
@@ -143,7 +141,6 @@ func New(options ...Option) (*Runtime, error) {
 		consumerAPI:        opts.consumerAPI,
 		configuredCard:     opts.agentCard,
 		configuredCardJSON: append([]byte(nil), opts.agentCardJSON...),
-		legacyMetadata:     opts.agentMetadata != nil && opts.agentMetadata[adapteragentcard.MetadataLegacyAgentCard] != "",
 		cardBuilder:        opts.agentCardBuilder,
 		cardTools:          append([]tool.Tool(nil), opts.cardTools...),
 	}, nil
@@ -206,11 +203,14 @@ func (r *Runtime) Prepare(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		r.stateMu.Lock()
 		r.card = card
 		r.cardDocument = document
 		r.instanceMetadata = metadata
-		r.skillRepository = repository
+		r.skillRepository = r.startSkillRefresh(repository)
 		r.state = runtimeStatePrepared
 		r.stateMu.Unlock()
 		return nil
@@ -270,13 +270,9 @@ func (r *Runtime) Prepare(ctx context.Context) error {
 	r.instanceMetadata = metadata
 	r.metadataProvider = provider
 	r.metadataRegistered = true
-	r.skillRepository = repository
+	r.skillRepository = r.startSkillRefresh(repository)
 	r.state = runtimeStatePrepared
 	r.stateMu.Unlock()
-	if r.legacyMetadata {
-		log.Warnf("Legacy four-key AgentCard metadata for %s/%s was migrated to the canonical three-key registration contract",
-			r.config.Namespace, r.config.ServiceName)
-	}
 	return nil
 }
 
@@ -639,20 +635,30 @@ func (r *Runtime) loadSkills(ctx context.Context) (agentskill.Repository, error)
 	if err != nil {
 		return nil, adaptererrors.WrapError("load Skills", err)
 	}
+	return repository, nil
+}
+
+// startSkillRefresh transfers lifecycle ownership only when Prepare commits.
+// The caller holds stateMu and has finished all fallible preparation steps.
+func (r *Runtime) startSkillRefresh(repository agentskill.Repository) agentskill.Repository {
+	if !r.config.UseServiceSkills && len(r.config.SkillRefs) == 0 &&
+		!r.config.MountSkills && r.config.SkillCacheDir == "" &&
+		r.config.SkillMode != adapterconfig.SkillModePublished &&
+		r.config.SkillMode != adapterconfig.SkillModeMounted {
+		return repository
+	}
 	if r.config.SkillListRefresh > 0 {
 		refresh := adapterskill.NewPeriodicRepository(
 			context.Background(),
 			repository,
 			r.config.SkillListRefresh,
 			r.config.PolarisRequestTimeout,
-			load,
+			r.loadSkills,
 		)
-		r.stateMu.Lock()
 		r.skillRefresh = refresh
-		r.stateMu.Unlock()
-		return refresh, nil
+		return refresh
 	}
-	return repository, nil
+	return repository
 }
 
 func (r *Runtime) ensureConsumerAPI() error {

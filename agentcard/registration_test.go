@@ -19,7 +19,7 @@ import (
 	polarismodel "github.com/polarismesh/polaris-go/pkg/model"
 )
 
-func TestStaticRegistrationMetadataMigratesOnlyInExtension(t *testing.T) {
+func TestStaticRegistrationMetadataUsesCanonicalKeys(t *testing.T) {
 	for _, tt := range []struct {
 		name, service, schema, card string
 	}{
@@ -38,19 +38,6 @@ func TestStaticRegistrationMetadataMigratesOnlyInExtension(t *testing.T) {
 			require.Equal(t, tt.card, snapshot.Metadata[MetadataAgentCard])
 		})
 	}
-
-	legacy := map[string]string{
-		MetadataAgentName: "legacy-agent", MetadataLegacyAgentCard: fullAgentCardV03,
-		MetadataLegacyTransport: "JSONRPC", MetadataLegacyPath: "/a2a",
-	}
-	snapshot, err := BuildAgentInstanceRegistrationFromMetadata(AgentInstanceRegistrationRequest{
-		Namespace: "Production", Service: "legacy-agent", A2AVersion: "0.3",
-	}, legacy)
-	require.NoError(t, err)
-	require.Len(t, snapshot.Metadata, 3)
-	require.Equal(t, fullAgentCardV03, snapshot.Metadata[MetadataAgentCard])
-	require.NotContains(t, snapshot.Metadata, MetadataLegacyAgentCard)
-	require.Equal(t, fullAgentCardV03, legacy[MetadataLegacyAgentCard])
 }
 
 func TestStaticRegistrationMetadataRejectsAmbiguousInputs(t *testing.T) {
@@ -59,7 +46,6 @@ func TestStaticRegistrationMetadataRejectsAmbiguousInputs(t *testing.T) {
 		func(m map[string]string) { delete(m, MetadataA2AVersion) },
 		func(m map[string]string) { m[MetadataA2AVersion] = "0.3" },
 		func(m map[string]string) { m[MetadataAgentName] = "other" },
-		func(m map[string]string) { m[MetadataLegacyAgentCard] = fullAgentCardV10 },
 		func(m map[string]string) { m["mcp-server-name"] = "mcp" },
 		func(m map[string]string) { m["extra"] = "value" },
 	} {
@@ -72,10 +58,12 @@ func TestStaticRegistrationMetadataRejectsAmbiguousInputs(t *testing.T) {
 		Namespace: "Production", Service: "customer-agent", A2AVersion: "0.3",
 	}, base)
 	require.Error(t, err)
-	legacy := map[string]string{MetadataAgentName: "legacy-agent", MetadataLegacyAgentCard: fullAgentCardV03,
-		MetadataLegacyTransport: "JSONRPC", MetadataLegacyPath: "/a2a"}
-	_, err = BuildAgentInstanceRegistrationFromMetadata(AgentInstanceRegistrationRequest{Namespace: "Production", Service: "legacy-agent"}, legacy)
-	require.ErrorContains(t, err, "explicit A2AVersion")
+	_, err = BuildAgentInstanceRegistrationFromMetadata(AgentInstanceRegistrationRequest{
+		Namespace: "Production", Service: "customer-agent",
+	}, map[string]string{
+		MetadataAgentName: "customer-agent", MetadataA2AVersion: AgentCardSchemaVersion10,
+	})
+	require.ErrorContains(t, err, MetadataAgentCard)
 }
 
 func TestAgentRegistrationRejectsCrossIPAndInvalidPorts(t *testing.T) {

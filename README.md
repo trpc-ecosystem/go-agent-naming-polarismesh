@@ -34,9 +34,10 @@ The implementation is organized by domain, following the layout used by
 
 - Go 1.21 or newer
 - tRPC-Agent-Go v1.11.0 or newer
+- tRPC-Go v1.1.0 or newer
 - A2A v1 and `trpc-a2a-go/v2`
 - `go-naming-polarismesh` with dynamic `MetadataProvider` support
-- `trpc-mcp-go` v0.0.10 when using the optional `mcp/` package
+- `trpc-mcp-go` v0.0.17 when using the optional `mcp/` package
 
 ## Provider quick start
 
@@ -86,6 +87,12 @@ ai-agent-card  = <complete A2A AgentCard JSON>
 ai-a2a-version = 0.3 | 1.0
 ```
 
+The adapter owns these three AgentCard keys. When `polaris-go` promotes
+structured instance fields into `Instance.GetMetadata()`, validation and
+parsing also accept `version`, `region`, `zone`, and `campus`. Those fields are
+platform metadata rather than additional AgentCard contract keys; any other
+unexpected key is rejected.
+
 The instance host and version come from the AgentCard. Its port comes from
 `RegistrationPort` (default `1`), and the instance protocol is the empty
 string. One card produces one instance even when it advertises JSON-RPC,
@@ -100,7 +107,7 @@ instance protocol. No AgentCard parsing or AI policy remains in go-naming.
 `UpdateAgentCard` and `UpdateAgentCardJSON` replace the full frozen snapshot;
 a validation failure preserves the previous one.
 
-Static or legacy instance metadata is converted explicitly by the extension:
+Static instance metadata can be supplied explicitly with the canonical keys:
 
 ```go
 runtime, err := polarisagent.New(
@@ -111,10 +118,10 @@ runtime, err := polarisagent.New(
 
 Remove card metadata and `registration_port` from the naming YAML. Configure
 the extension with `WithRegistrationPort` instead (default `1`, range
-`1..65535`). New metadata requires `ai-a2a-version`; legacy four-key input
-requires an explicit schema and emits only the three new keys, preserving the
-card JSON bytes. Mixed sources and conflicting framework configuration fail
-before registration. Naming remains the sole registration/heartbeat owner.
+`1..65535`). Registration metadata must use the canonical three AgentCard keys
+and `ai-a2a-version`; the card JSON bytes are preserved. Mixed sources and
+conflicting framework configuration fail before registration. Naming remains
+the sole registration/heartbeat owner.
 
 If the provider is already installed by the current tRPC process, the Runtime
 can reuse its SDK context explicitly:
@@ -265,7 +272,8 @@ types into the root package or `polaris-go`.
 
 - `PrepareServer` builds and validates `mcp-server-name`,
   `mcp-protocol-version`, and the transport-specific endpoint path.
-- `CollectContract` reads Tools, Resources, and Prompts and reports contract
+- `CollectContract` reads only the initialized server's declared Tools,
+  Resources, and Prompts capabilities and reports contract
   type `mcp`, feature types `101/102/103`, request methods, and notification
   metadata. Contract reporting uses `ProviderAPI.ReportServiceContract`; queries use
   `ConsumerAPI.GetServiceContract`. Reporting defaults to fail-fast and can use
@@ -275,6 +283,21 @@ types into the root package or `polaris-go`.
 - `Pool` and `Watcher` maintain one initialized client per healthy instance,
   detect endpoint/path/protocol replacements, and report call results as
   `InstanceTypeMCP`.
+
+Adapter clients retain initialization capabilities. External connectors must
+implement `ServerCapabilitiesProvider` or supply the actual initialization
+capabilities through `Config.ServerCapabilities` before collecting a contract.
+Errors from declared capabilities remain failures.
+
+Client operations are serialized per connector; queueing is cancellable and
+included in `Timeout`. Streamable HTTP disables the SDK's independent GET SSE
+connection because its session/event fields are not concurrency-safe. POST SSE
+responses and legacy SSE remain supported. Custom Streamable HTTP pool factories
+must return an adapter `NewClient` or another concurrency-safe connector, not a
+bare `trpc-mcp-go.Client`.
+Custom connectors must honor request contexts and synchronize background work.
+Synchronous notification callbacks must enqueue requests to the same connector
+instead of waiting for them inside the active request.
 
 Polaris currently stores `service_contract_detail.method` as `VARCHAR(32)`.
 MCP notification names longer than that are retained in the contract JSON
@@ -325,11 +348,11 @@ New -> Prepare -> Serve -> stop serving -> Runtime.Close
 
 ## Development
 
-Core is pinned to `polaris-go v1.7.3-0.20261117071435-aa5b423c60a7` without a
-filesystem replacement. The new generic go-naming snapshot interface still
-uses a sibling checkout (`v0.0.0` plus replace). Publish a fetchable naming
-version and remove that replacement before publishing this module. Local
-cross-repository tests do not establish independent-checkout or remote CI success.
+Core is pinned to the `polaris-go` main snapshot
+`v1.7.3-0.20261118135400-4fe9e1e0aca7`.
+The generic naming adapter is pinned to the `go-naming-polarismesh` main snapshot
+`trpc-naming-polarismesh v1.0.1-0.20261119025216-6b54006e7aff`. Both use
+fetchable module versions and there are no filesystem replacements.
 
 ```bash
 go test -race -count=1 ./...
@@ -339,58 +362,45 @@ golangci-lint run ./...
 
 ## Runnable Examples
 
-Start with [examples/quickstart](examples/quickstart). It contains direct Go
-Provider/Client code for deterministic registration, Polaris discovery, and A2A
-unary/streaming. Additional focused demos:
+The examples follow the runnable style of `trpc-agent-go`: a real LLM Agent,
+a real Agent Runner, and a real Polaris AI Registry.
 
-- [examples/skill](examples/skill): download and execute a real published Skill;
-- [examples/cancel](examples/cancel): cancel a discovered stream and verify
-  Provider release;
-- [examples/mcp](examples/mcp): register a real MCP Server Contract, discover
-  it, and call a Tool through the client pool.
-- [examples/mcp/transports](examples/mcp/transports): prepare two MCP transport
-  endpoints in the extension, verify native wire calls and both contracts,
-  and exercise heartbeat, stable ID, revision and deregistration behavior.
+| Example | What it demonstrates | LLM key |
+| --- | --- | --- |
+| [examples/a2a](examples/a2a) | AgentCard registration, Polaris discovery, A2A unary/streaming | Yes |
+| [examples/mcp](examples/mcp) | MCP metadata, Service Contract, discovery, and tool calls | Yes |
+| [examples/skill](examples/skill) | Skill publish, install, repository assembly, and `skill_load` | Yes |
+| [examples/a2a-agentcard](examples/a2a-agentcard) | Registered Agent A calls two versioned Agent B instances | No |
 
-All four run without an LLM key and always require a Polaris host at runtime.
+The A2A, MCP, and Skill examples require an OpenAI-compatible model endpoint.
+Every example requires a Polaris host at runtime.
+Each example has a `cleanup.sh` with `--dry-run`, `--force`, and
+`--delete-service` support.
+The `a2a-agentcard` provider defaults to the polaris-python 1.0/0.3
+multi-interface A2A scenario; explicit `-role agent-a|agent-b` selects the
+multi-version flow.
 
 ## Full Integration Tests
 
-`examples/ai-registry/` provides standalone Provider and Consumer executables and
-28 real E2E cases. The Polaris host must be supplied through `--server` or
-`POLARIS_SERVER`; Discovery, Console, and Skill ports default to 8091, 8090, and
-8094. Tests use a dedicated `go-agent-naming-e2e` namespace and unique per-run
-resources. Explicit empty `extended_metadata` requires Polaris `v2.2.0.0` or
-newer. No LLM API key is required.
-
-The full suite requires a Polaris version that supports replacing
-`extended_metadata` with an explicit empty list. On an older server, case 3.7
-must fail rather than treating a no-op as success. The adapter does not convert
-that server response into a successful Skill removal.
+`integration/` contains focused real-service suites for A2A, MCP, Skill, and
+the registered `a2a-agentcard` flow. They use deterministic or scripted
+models, so no LLM API key is required. The Polaris host must be supplied
+through `POLARIS_SERVER`; Discovery, Console, and Skill ports default to 8091,
+8090, and 8094. Tests use a dedicated
+`go-agent-naming-e2e` namespace and unique per-run resources.
 
 ```bash
-cd examples/ai-registry
 export POLARIS_SERVER=your-polaris-host
-bash verify_all.sh --server="$POLARIS_SERVER" --resources=cleanup
-bash verify_all.sh --server="$POLARIS_SERVER" --resources=keep
-bash cleanup.sh --state=.logs/<run-id>/state.json --dry-run
-bash cleanup.sh --state=.logs/<run-id>/state.json --apply
-bash cleanup.sh --state=.logs/<run-id>/state.json --apply --delete-service
-bash cleanup.sh --delete-service --dry-run
-bash cleanup.sh --delete-service --apply
+bash integration/verify_all.sh
 ```
 
-Choose `keep` or `cleanup` explicitly. Credentials are read from environment
-variables or an existing SDK configuration file and never saved to state.
-State-scoped `--apply` stops recorded processes but keeps services and Skills.
-`--delete-service` additionally removes state services/Skills and historical
-empty `go-agent-e2e-*` resources owned by this example. `--delete-services` is
-an alias. Cleanup validates ownership labels, process identity and real instance
-state. See the [E2E guide](examples/ai-registry/test.md) for details.
+Each test creates uniquely named services and Skills, then deregisters and
+deletes only its own resources in `t.Cleanup`. The shared namespace is
+retained. See the [integration guide](integration/README.md) for suite details
+and environment variables.
 
-For validation on a separate deployment host, build the self-contained cloud
-package described in the
-[remote E2E guide](examples/ai-registry/cloud/README.md).
+For a killed run, [`integration/cleanup.sh`](integration/cleanup.sh) removes
+resources by run ID.
 
 ## License
 

@@ -51,5 +51,10 @@ go-naming-polarismesh/
 /examples/**/.*-pids
 /examples/**/.polaris-cache/
 /examples/**/.skill-cache/
-/examples/ai-registry/cloud/dist/
-/examples/ai-registry/.cloud-runs/
+/integration/**/.build/
+/integration/**/.logs/
+/integration/**/polaris/
+/integration/**/.*-pids
+/integration/**/.polaris-cache/
+/integration/**/.skill-cache/
+/integration/.retained/

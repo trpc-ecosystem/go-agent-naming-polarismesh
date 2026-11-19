@@ -33,9 +33,10 @@ Server、Service Contract、Client Pool 和 Watch。
 
 - Go 1.21 或更新版本
 - tRPC-Agent-Go v1.11.0 或更新版本
+- tRPC-Go v1.1.0 或更新版本
 - A2A v1 与 `trpc-a2a-go/v2`
 - 支持动态 `MetadataProvider` 的 `go-naming-polarismesh`
-- 使用可选 `mcp/` 包时需要 `trpc-mcp-go` v0.0.10
+- 使用可选 `mcp/` 包时需要 `trpc-mcp-go` v0.0.17
 
 ## Provider
 
@@ -81,6 +82,11 @@ ai-agent-card  = <完整 A2A AgentCard JSON>
 ai-a2a-version = 0.3 | 1.0
 ```
 
+适配层负责维护这三个 AgentCard 元数据键。当 `polaris-go` 把结构化实例字段提升到
+`Instance.GetMetadata()` 时，校验和解析也会接受 `version`、`region`、`zone`
+和 `campus`。这些字段属于平台元数据，不是额外的 AgentCard 契约键；其他未知键
+仍会被拒绝。
+
 实例 host 和 version 来自 AgentCard；实例 port 使用 `RegistrationPort`
 （默认 `1`），protocol 固定为空。即使卡片同时声明 JSON-RPC、HTTP+JSON 和
 gRPC interface，也只生成一个实例。所有 interface 必须使用同一 IP；业务
@@ -93,7 +99,7 @@ go-naming 不再解析 AgentCard 或执行 AI 业务规则。
 `UpdateAgentCard` 与 `UpdateAgentCardJSON` 只有新卡片完整校验通过才整体替换；
 失败时保留上一份完整快照。
 
-静态或 legacy 实例 metadata 必须显式在扩展层转换：
+静态实例 metadata 必须直接使用三个标准 AgentCard 键：
 
 ```go
 runtime, err := polarisagent.New(
@@ -104,9 +110,9 @@ runtime, err := polarisagent.New(
 
 从 naming YAML 删除 Card metadata 和 `registration_port`，改为扩展层的
 `WithRegistrationPort`（默认 `1`，范围 `1..65535`）。新 metadata 必须有
-`ai-a2a-version`；legacy 四键必须显式指定 schema，转成标准三键并保持 Card JSON
-字节不变。多 Card 来源、静态冲突和框架配置冲突在注册前失败，naming 仍是
-实例注册、心跳和反注册的唯一 owner。
+`ai-a2a-version`，并且只使用三个标准 AgentCard 元数据键；Card JSON 字节保持
+不变。多 Card 来源、静态冲突和框架配置冲突在注册前失败，naming 仍是实例注册、
+心跳和反注册的唯一 owner。
 
 如果当前 tRPC 进程已经初始化 `go-naming-polarismesh`，Runtime 可以显式复用注册侧
 SDKContext：
@@ -237,7 +243,8 @@ config.MountSkills = true
 
 - `PrepareServer` 构建并校验 `mcp-server-name`、`mcp-protocol-version`
   和 transport endpoint path。
-- `CollectContract` 读取 Tools、Resources、Prompts，上报 contract type `mcp`、
+- `CollectContract` 仅采集初始化响应中声明的 Tools、Resources、Prompts 能力，
+  上报 contract type `mcp`、
   feature type `101/102/103`、request method 和 notification metadata。Contract
   上报使用 `ProviderAPI.ReportServiceContract`，查询使用
   `ConsumerAPI.GetServiceContract`。上报默认 fail-fast，也可显式配置 `warn`
@@ -246,6 +253,19 @@ config.MountSkills = true
   不注册网络实例。
 - `Pool`/`Watcher` 为每个健康实例维护已初始化 Client，识别 endpoint、path 和
   protocol 替换，并把调用结果按 `InstanceTypeMCP` 上报。
+
+适配层 Client 保留初始化能力。外部 Connector 在采集契约前必须实现
+`ServerCapabilitiesProvider`，或通过 `Config.ServerCapabilities` 提供真实的
+初始化能力；已声明能力的调用错误仍返回失败。
+
+每个 Connector 的操作串行执行，排队支持取消且计入 `Timeout`。Streamable HTTP
+禁用 SDK 独立的 GET SSE 连接，避免其未同步的 session/event 字段发生竞争；
+POST SSE 响应及旧版 SSE 传输仍受支持。自定义 Streamable HTTP Pool factory 必须
+返回适配层 `NewClient` 或其他并发安全 Connector，不能返回裸的
+`trpc-mcp-go.Client`。
+自定义 Connector 必须遵循请求 context，并同步其后台任务。同步 notification
+回调中需要向同一 Connector 发起请求时，应交给队列异步执行，不能在当前请求
+内部等待新请求完成。
 
 当前 Polaris 的 `service_contract_detail.method` 仍是 `VARCHAR(32)`。超过长度限制的
 MCP notification 名称不会截断或作为非法 InterfaceDescriptor 上报，而是保留在
@@ -289,10 +309,10 @@ New -> Prepare -> Serve -> 停止服务 -> Runtime.Close
 
 ## 开发
 
-Core 已固定为 `polaris-go v1.7.3-0.20261117071435-aa5b423c60a7`，没有 filesystem
-replace。go-naming 的新通用快照接口仍使用兄弟工作树（`v0.0.0` 加 replace）；
-发布前必须替换为可获取 naming 版本并移除 replace。本地跨仓测试不代表独立
-checkout 或远端 CI 已通过。
+Core 固定为 `polaris-go` main 快照
+`v1.7.3-0.20261118135400-4fe9e1e0aca7`，通用 naming 适配层固定为
+`trpc-naming-polarismesh v1.0.1-0.20261119025216-6b54006e7aff`。两者均使用
+可获取的模块版本，不再使用 filesystem replace。
 
 ```bash
 go test -race -count=1 ./...
@@ -302,54 +322,42 @@ golangci-lint run ./...
 
 ## 可运行示例
 
-建议先看 [examples/quickstart](examples/quickstart)。其中包含可直接运行的 Go
-Provider/Client，用确定性 Agent 验证注册、Polaris 发现和 A2A unary/streaming。
-其他重点示例：
+示例沿用 `trpc-agent-go` 的运行方式：真实 LLM Agent、真实 Agent Runner 和
+真实北极星 AI Registry。
 
-- [examples/skill](examples/skill)：下载并执行真实 published Skill；
-- [examples/cancel](examples/cancel)：取消已发现的远端流并验证 Provider 释放。
-- [examples/mcp](examples/mcp)：注册真实 MCP Service Contract、发现实例并通过
-  Client Pool 调用 Tool。
-- [examples/mcp/transports](examples/mcp/transports)：准备两个原生 MCP transport
-  endpoint，验证独立 Contract、稳定 ID、TTL 和反注册。
-- [examples/mcp/transports](examples/mcp/transports)：扩展层生成两个 transport 的
-  endpoint，验证原生 wire 调用、双 Contract、TTL、稳定 ID、revision 和反注册。
+| 示例 | 展示内容 | 是否需要 LLM key |
+| --- | --- | --- |
+| [examples/a2a](examples/a2a) | AgentCard 注册、北极星发现、A2A 单次与流式调用 | 需要 |
+| [examples/mcp](examples/mcp) | MCP metadata、Service Contract、发现和工具调用 | 需要 |
+| [examples/skill](examples/skill) | Skill 发布、安装、Repository 组装和 `skill_load` | 需要 |
+| [examples/a2a-agentcard](examples/a2a-agentcard) | 已注册 Agent A 调用两个版本的 Agent B | 不需要 |
 
-四个示例都不需要 LLM key，但运行时必须提供 Polaris 地址。
+`a2a`、`mcp`、`skill` 需要一个 OpenAI 兼容的模型服务；所有示例运行时都必须
+提供北极星地址。
+每个示例都提供支持 `--dry-run`、`--force` 和 `--delete-service` 的
+`cleanup.sh`。
+`a2a-agentcard` Provider 默认使用 polaris-python 的 1.0/0.3 多接口 A2A
+场景；显式设置 `-role agent-a|agent-b` 才进入多版本调用流程。
 
 ## 完整集成测试
 
-`examples/ai-registry/` 提供可独立运行的 Provider、Consumer，以及 28 项真实 E2E。
-服务端地址必须通过 `--server` 或 `POLARIS_SERVER` 提供；Discovery、Console、Skill
-端口默认分别为 8091、8090、8094。测试使用隔离的 `go-agent-naming-e2e` 命名空间
-和逐轮资源名。显式空 `extended_metadata` 需要 Polaris `v2.2.0.0` 或更新版本；
-不需要 LLM 密钥。
-
-完整套件要求 Polaris 支持用显式空列表替换 `extended_metadata`。旧服务端会继续
-保留旧 Skill 引用，此时 case 3.7 必须失败，适配层不会把服务端的 no-op 响应
-转换成成功。
+`integration/` 提供 A2A、MCP、Skill 以及已注册 `a2a-agentcard` 链路的
+真实服务套件。测试使用确定性或脚本化模型，不需要 LLM key。北极星地址必须
+通过 `POLARIS_SERVER` 提供；Discovery、Console、Skill 端口默认分别为
+8091、8090、8094。测试使用隔离的
+`go-agent-naming-e2e` namespace 和逐轮唯一资源名。
 
 ```bash
-cd examples/ai-registry
 export POLARIS_SERVER=your-polaris-host
-bash verify_all.sh --server="$POLARIS_SERVER" --resources=cleanup
-bash verify_all.sh --server="$POLARIS_SERVER" --resources=keep
-bash cleanup.sh --state=.logs/<run-id>/state.json --dry-run
-bash cleanup.sh --state=.logs/<run-id>/state.json --apply
-bash cleanup.sh --state=.logs/<run-id>/state.json --apply --delete-service
-bash cleanup.sh --delete-service --dry-run
-bash cleanup.sh --delete-service --apply
+bash integration/verify_all.sh
 ```
 
-必须显式选择 `keep` 或 `cleanup`。凭据仅从环境变量或已有 SDK 配置文件读取，
-不写入 state；按 state 执行 `--apply` 默认只停止当前运行记录且身份匹配的进程，
-服务与 Skill 保留。增加 `--delete-service` 才会删除该 state 的服务/Skill，
-并扫描历史零实例资源；`--delete-services` 是别名。清理前会校验 owner、
-精确进程身份和真实实例状态。
-用例、运行参数和失败排查见 [真实 E2E 文档](examples/ai-registry/test.zh_CN.md)。
+每个测试创建带 run ID 的服务和 Skill，并在 `t.Cleanup` 中只反注册、删除
+自己创建的资源；共享 namespace 保留。套件说明和环境变量见
+[集成测试说明](integration/README.zh_CN.md)。
 
-需要在独立部署主机上验证时，使用
-[远端 E2E 指南](examples/ai-registry/cloud/README.zh_CN.md) 构建自包含部署包。
+测试进程被中断时，可用 [`integration/cleanup.sh`](integration/cleanup.sh)
+按 run ID 清理资源。
 
 ## 许可证
 

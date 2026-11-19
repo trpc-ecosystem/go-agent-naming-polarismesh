@@ -101,13 +101,6 @@ const (
 	MetadataAgentCard = agentcard.MetadataAgentCard
 	// MetadataA2AVersion is the AgentCard schema version metadata key.
 	MetadataA2AVersion = agentcard.MetadataA2AVersion
-	// MetadataLegacyAgentCard is the deprecated four-key card metadata key.
-	MetadataLegacyAgentCard = agentcard.MetadataLegacyAgentCard
-	// MetadataLegacyTransport is the deprecated four-key transport metadata key.
-	MetadataLegacyTransport = agentcard.MetadataLegacyTransport
-	// MetadataLegacyPath is the deprecated four-key path metadata key.
-	MetadataLegacyPath = agentcard.MetadataLegacyPath
-
 	// A2AVersionV03 identifies the A2A v0.3 card schema.
 	A2AVersionV03 = config.A2AVersionV03
 	// A2AVersionV10 identifies the A2A v1.0 card schema.
@@ -194,7 +187,7 @@ func WithAgentCardJSON(version string, raw []byte) Option {
 	return agent.WithAgentCardJSON(version, raw)
 }
 
-// WithAgentInstanceMetadata migrates static or legacy registration metadata.
+// WithAgentInstanceMetadata supplies canonical three-key static metadata.
 func WithAgentInstanceMetadata(version string, metadata map[string]string) Option {
 	return agent.WithAgentInstanceMetadata(version, metadata)
 }

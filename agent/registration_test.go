@@ -108,54 +108,45 @@ func TestRuntimeRegistersRawCardThroughGenericNaming(t *testing.T) {
 	}
 }
 
-func TestRuntimeStaticAndLegacyMetadataUseGenericNaming(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		t.Run(fmt.Sprint(legacy), func(t *testing.T) {
-			cfg := config.DefaultConfig()
-			cfg.Namespace, cfg.ServiceName = "Production", t.Name()
-			raw := string(rawRegistrationCard(cfg.ServiceName, "v2", "127.0.0.1", "1.0"))
-			metadata := map[string]string{agentcard.MetadataAgentName: cfg.ServiceName,
-				agentcard.MetadataAgentCard: raw, agentcard.MetadataA2AVersion: "1.0"}
-			version := ""
-			if legacy {
-				metadata = map[string]string{agentcard.MetadataAgentName: cfg.ServiceName,
-					agentcard.MetadataLegacyAgentCard: raw, agentcard.MetadataLegacyTransport: "JSONRPC",
-					agentcard.MetadataLegacyPath: "/a2a"}
-				version = "1.0"
-			}
-			option := WithAgentInstanceMetadata(version, metadata)
-			runtime, err := New(WithConfig(cfg), option)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, runtime.Close(context.Background())) })
-			for key := range metadata {
-				metadata[key] = "changed"
-			}
-			require.NoError(t, runtime.Prepare(context.Background()))
-			p := &registrationRecorder{}
-			reg, err := polarisregistry.NewRegistry(p, &polarisregistry.Config{Namespace: cfg.Namespace,
-				ServiceName: cfg.ServiceName, EnableRegister: true, DisableHealthCheck: true})
-			require.NoError(t, err)
-			require.NoError(t, reg.Register(""))
-			require.Len(t, p.requests, 1)
-			require.Len(t, p.requests[0].Metadata, 3)
-			require.Equal(t, raw, p.requests[0].Metadata[agentcard.MetadataAgentCard])
-			require.Equal(t, "v2", *p.requests[0].Version)
-			require.Equal(t, 1, p.requests[0].Port)
-			require.NoError(t, reg.Deregister(""))
-		})
+func TestRuntimeStaticMetadataUsesGenericNaming(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Namespace, cfg.ServiceName = "Production", t.Name()
+	raw := string(rawRegistrationCard(cfg.ServiceName, "v2", "127.0.0.1", "1.0"))
+	metadata := map[string]string{
+		agentcard.MetadataAgentName:  cfg.ServiceName,
+		agentcard.MetadataAgentCard:  raw,
+		agentcard.MetadataA2AVersion: "1.0",
 	}
+	runtime, err := New(WithConfig(cfg), WithAgentInstanceMetadata("", metadata))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, runtime.Close(context.Background())) })
+	for key := range metadata {
+		metadata[key] = "changed"
+	}
+	require.NoError(t, runtime.Prepare(context.Background()))
+	p := &registrationRecorder{}
+	reg, err := polarisregistry.NewRegistry(p, &polarisregistry.Config{Namespace: cfg.Namespace,
+		ServiceName: cfg.ServiceName, EnableRegister: true, DisableHealthCheck: true})
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(""))
+	require.Len(t, p.requests, 1)
+	require.Len(t, p.requests[0].Metadata, 3)
+	require.Equal(t, raw, p.requests[0].Metadata[agentcard.MetadataAgentCard])
+	require.Equal(t, "v2", *p.requests[0].Version)
+	require.Equal(t, 1, p.requests[0].Port)
+	require.NoError(t, reg.Deregister(""))
 }
 
 func TestRuntimeStaticMetadataRejectsAmbiguousSources(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Namespace, cfg.ServiceName = "Production", t.Name()
 	raw := string(rawRegistrationCard(cfg.ServiceName, "v1", "127.0.0.1", "1.0"))
-	legacy := map[string]string{agentcard.MetadataAgentName: cfg.ServiceName,
-		agentcard.MetadataLegacyAgentCard: raw, agentcard.MetadataLegacyTransport: "JSONRPC",
-		agentcard.MetadataLegacyPath: "/a2a"}
-	_, err := New(WithConfig(cfg), WithAgentInstanceMetadata("", legacy))
-	require.ErrorContains(t, err, "explicit A2AVersion")
-	_, err = New(WithConfig(cfg), WithAgentInstanceMetadata("1.0", legacy), WithAgentCardJSON("1.0", []byte(raw)))
+	metadata := map[string]string{
+		agentcard.MetadataAgentName:  cfg.ServiceName,
+		agentcard.MetadataAgentCard:  raw,
+		agentcard.MetadataA2AVersion: "1.0",
+	}
+	_, err := New(WithConfig(cfg), WithAgentInstanceMetadata("1.0", metadata), WithAgentCardJSON("1.0", []byte(raw)))
 	require.ErrorContains(t, err, "another AgentCard source")
 }
 
@@ -175,8 +166,8 @@ func TestRuntimeRejectsFrameworkConflictsBeforePublishingProvider(t *testing.T) 
 		{"mixed MCP", func(c *polarisregistry.Config) {
 			c.Metadata = map[string]string{model.MCPMetadataKeyServerName: "static"}
 		}, "reserved agent key"},
-		{"legacy", func(c *polarisregistry.Config) {
-			c.Metadata = map[string]string{agentcard.MetadataLegacyAgentCard: "{}"}
+		{"reserved a2a namespace", func(c *polarisregistry.Config) {
+			c.Metadata = map[string]string{"a2a.custom": "value"}
 		}, "reserved agent key"},
 		{"extra metadata", func(c *polarisregistry.Config) { c.Metadata = map[string]string{"extra": "value"} }, "exactly three"},
 		{"heartbeat only", func(c *polarisregistry.Config) { c.EnableRegister = false }, "enabled"},

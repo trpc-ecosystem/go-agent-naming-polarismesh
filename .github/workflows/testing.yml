@@ -26,28 +26,19 @@ jobs:
       - name: Check out adapter
         uses: actions/checkout@v4
 
-      - name: Check out go-naming-polarismesh
-        uses: actions/checkout@v4
-        with:
-          repository: trpc-ecosystem/go-naming-polarismesh
-          ref: ${{ github.head_ref || github.ref_name }}
-          path: go-naming-polarismesh
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Use matching naming dependency branch
-        run: |
-          go mod edit -replace=trpc.group/trpc-go/trpc-naming-polarismesh=./go-naming-polarismesh
-
       - name: Download dependencies
         run: go mod download
 
       - name: Verify module files
-        run: go mod tidy -diff
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
 
       - name: Build
         run: go build ./...
@@ -64,15 +55,15 @@ jobs:
 
       - name: Build remote E2E package
         run: |
-          ./examples/ai-registry/cloud/build-package.sh \
+          ./integration/ai-registry/cloud/build-package.sh \
             --output-dir /tmp/go-agent-cloud-dist \
             --build-root /tmp/go-agent-cloud-build
 
-      - name: Validate example scripts
+      - name: Validate example and integration scripts
         run: |
           while IFS= read -r script; do
             bash -n "$script"
-          done < <(find examples -type f -name '*.sh' -print)
+          done < <(find examples integration -type f -name '*.sh' -print)
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

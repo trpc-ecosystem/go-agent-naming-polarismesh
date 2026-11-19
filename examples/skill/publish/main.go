@@ -7,7 +7,7 @@
  * trpc-agent-naming-polarismesh is licensed under the Apache License Version 2.0.
  */
 
-// Package main publishes the deterministic Skill used by the Skill demo.
+// Package main publishes the demo Skill used by the Skill example.
 package main
 
 import (
@@ -32,41 +32,33 @@ import (
 )
 
 const (
-	owner     = "trpc-agent-naming-polarismesh-demo"
-	ownerKey  = "examples.owner"
-	kindKey   = "examples.kind"
-	skillKind = "skill"
+	owner    = "trpc-agent-naming-polarismesh-examples"
+	ownerKey = "examples.owner"
 )
 
 var (
-	server    string
-	httpPort  int
-	grpcPort  int
-	skillAddr string
-	namespace string
-	name      string
-	version   string
-	timeout   time.Duration
+	server      string
+	polarisPort int
+	consolePort int
+	skillPort   int
+	namespace   string
+	name        string
+	version     string
+	timeout     time.Duration
 )
 
 func main() {
 	flag.StringVar(&server, "server", os.Getenv("POLARIS_SERVER"), "Polaris host")
-	flag.IntVar(&httpPort, "console-port", 8090, "Polaris Console port")
-	flag.IntVar(&grpcPort, "polaris-port", 8091, "Polaris Discovery gRPC port")
-	flag.StringVar(&skillAddr, "skill-address", "", "Polaris Skill gRPC host:port")
-	flag.StringVar(&namespace, "namespace", "go-naming-polarismesh-skill-demo", "Polaris namespace")
-	flag.StringVar(&name, "skill", "trpc-polaris-demo-skill", "Skill name")
+	flag.IntVar(&polarisPort, "polaris-port", 8091, "Polaris Discovery gRPC port")
+	flag.IntVar(&consolePort, "console-port", 8090, "Polaris Console HTTP port")
+	flag.IntVar(&skillPort, "skill-port", 8094, "Polaris Skill gRPC port")
+	flag.StringVar(&namespace, "namespace", "go-agent-naming-examples", "Polaris namespace")
+	flag.StringVar(&name, "skill", "polaris-greeting", "Skill name")
 	flag.StringVar(&version, "skill-version", "1.0.0", "Skill version")
-	flag.DurationVar(&timeout, "timeout", 10*time.Second, "Console and Skill operation timeout")
+	flag.DurationVar(&timeout, "timeout", 30*time.Second, "Console and Skill timeout")
 	flag.Parse()
 	if server == "" {
 		log.Fatal("--server or POLARIS_SERVER is required")
-	}
-	if httpPort < 1 || httpPort > 65535 || grpcPort < 1 || grpcPort > 65535 {
-		log.Fatal("Polaris ports must be between 1 and 65535")
-	}
-	if timeout <= 0 {
-		log.Fatal("--timeout must be positive")
 	}
 	if err := publish(); err != nil {
 		log.Fatal(err)
@@ -78,6 +70,7 @@ func publish() error {
 	if err != nil {
 		return err
 	}
+	defer client.CloseIdleConnections()
 	if err := ensureNamespace(client, origin); err != nil {
 		return err
 	}
@@ -89,66 +82,165 @@ func publish() error {
 		log.Printf("Skill already published: %s@%s", name, version)
 	} else {
 		if existing == nil {
-			payload := map[string]any{
-				"namespace": namespace, "name": name, "version": version,
-				"description": "Deterministic Polaris Skill demo",
-				"scope":       "PRIVATE", "author": owner,
-				"tags": []string{"trpc-agent-go", "polaris-demo"},
-				"ext":  map[string]string{ownerKey: owner, kindKey: skillKind},
-				"files": []map[string]any{{
-					"path": "SKILL.md", "contentType": "text",
-					"content": []byte(fmt.Sprintf(`---
+			if err := createSkill(client, origin); err != nil {
+				return err
+			}
+		}
+		if err := publishVersion(client, origin); err != nil {
+			return err
+		}
+	}
+	return waitForDataPlane()
+}
+
+func createSkill(client *http.Client, origin string) error {
+	payload := map[string]any{
+		"namespace":   namespace,
+		"name":        name,
+		"version":     version,
+		"description": "Polaris AI Registry example Skill",
+		"scope":       "PRIVATE",
+		"author":      owner,
+		"tags":        []string{"trpc-agent-go", "polaris-example"},
+		"ext":         map[string]string{ownerKey: owner},
+		"files": []map[string]any{
+			{
+				"path":        "SKILL.md",
+				"contentType": "text",
+				"content": []byte(fmt.Sprintf(`---
 name: %s
-description: Deterministic Skill downloaded from Polaris
+description: Answers with the Polaris example greeting
 ---
 
-POLARIS_DEMO_SKILL=%s
-This content is installed from the real Polaris Skill Registry.
+# Polaris Greeting
+
+When the user asks for the Polaris greeting, answer exactly:
+
+POLARIS_SKILL_GREETING=hello-from-%s
 `, name, version)),
-				}},
-			}
-			response, err := request(client, http.MethodPost, origin+"/skill/v1/skills", payload)
+			},
+			{
+				"path":        "references/details.md",
+				"contentType": "text",
+				"content":     []byte("This reference file proves the example packages multiple Skill files.\n"),
+			},
+			{
+				"path":        "scripts/echo.sh",
+				"contentType": "text",
+				"content":     []byte("#!/bin/sh\necho \"polaris-skill-script\"\n"),
+			},
+		},
+	}
+	response, err := request(client, http.MethodPost, origin+"/skill/v1/skills", payload)
+	if err != nil {
+		return err
+	}
+	if response.Code != 200000 && response.Code != 400201 {
+		return fmt.Errorf("create Skill: code=%d info=%s", response.Code, response.Info)
+	}
+	return waitForVersion(client, origin, 10*time.Second)
+}
+
+func waitForVersion(client *http.Client, origin string, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		item, err := getVersion(client, origin)
+		if err == nil && item != nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
 			if err != nil {
 				return err
 			}
-			if response.Code != 200000 && response.Code != 400201 {
-				return fmt.Errorf("create Skill failed: code=%d info=%s", response.Code, response.Info)
-			}
-			if _, err := waitForVersion(client, origin, 5*time.Second); err != nil {
-				return err
-			}
+			return errors.New("skill version did not become visible before timeout")
 		}
-		response, err := request(client, http.MethodPut, origin+"/skill/v1/skills/publish", map[string]string{
-			"namespace": namespace, "name": name, "version": version, "comment": "runnable example",
-		})
-		if err != nil {
-			return err
-		}
-		if response.Code != 200000 && response.Code != 200002 {
-			return fmt.Errorf("publish Skill failed: code=%d info=%s", response.Code, response.Info)
-		}
-
-		deadline := time.Now().Add(30 * time.Second)
-		for time.Now().Before(deadline) {
-			item, err := getVersion(client, origin)
-			if err == nil && item != nil && strings.EqualFold(item.Status, "published") {
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		item, err := getVersion(client, origin)
-		if err != nil {
-			return err
-		}
-		if item == nil || !strings.EqualFold(item.Status, "published") {
-			return errors.New("skill was not visible as published before timeout")
-		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	if err := waitForSkillDataPlane(); err != nil {
+}
+
+func publishVersion(client *http.Client, origin string) error {
+	response, err := request(client, http.MethodPut, origin+"/skill/v1/skills/publish", map[string]string{
+		"namespace": namespace,
+		"name":      name,
+		"version":   version,
+		"comment":   "published by the go-agent-naming-polarismesh example",
+	})
+	if err != nil {
 		return err
 	}
-	log.Printf("Skill published and downloadable: %s@%s", name, version)
-	return nil
+	if response.Code != 200000 && response.Code != 200002 {
+		return fmt.Errorf("publish Skill: code=%d info=%s", response.Code, response.Info)
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		item, err := getVersion(client, origin)
+		if err == nil && item != nil && strings.EqualFold(item.Status, "published") {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("skill did not become published before timeout")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func waitForDataPlane() error {
+	address := net.JoinHostPort(server, fmt.Sprint(skillPort))
+	sdk, err := demo.NewSDK(
+		net.JoinHostPort(server, fmt.Sprint(polarisPort)),
+		address,
+		true,
+		timeout,
+	)
+	if err != nil {
+		return fmt.Errorf("create Skill data-plane client: %w", err)
+	}
+	defer sdk.Destroy()
+	skills := api.NewSkillAPIByContext(sdk)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var last error
+	for {
+		resource, err := skills.GetSkill(&api.GetSkillRequest{GetSkillRequest: model.GetSkillRequest{
+			Namespace: namespace,
+			Name:      name,
+			Version:   version,
+		}})
+		if err != nil {
+			last = err
+		} else if resource == nil || resource.Namespace != namespace ||
+			resource.Name != name || resource.Version != version {
+			last = errors.New("published Skill identity is not visible")
+		} else {
+			pkg, err := skills.DownloadSkill(&api.SkillDownloadRequest{
+				SkillDownloadRequest: model.SkillDownloadRequest{
+					Namespace: namespace,
+					Name:      name,
+					Version:   version,
+					Format:    model.SkillFormatZIP,
+				},
+			})
+			if err == nil && pkg != nil && len(pkg.Content) > 0 {
+				log.Printf("Skill published and downloadable: %s/%s@%s", namespace, name, version)
+				return nil
+			}
+			if err != nil {
+				last = err
+			} else {
+				last = errors.New("published Skill package is empty")
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("skill data plane did not become ready: %w; last error: %v", ctx.Err(), last)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+type versionInfo struct {
+	Version string `json:"version"`
+	Status  string `json:"status"`
 }
 
 type envelope struct {
@@ -157,16 +249,10 @@ type envelope struct {
 	Resource *struct {
 		Ext map[string]string `json:"ext"`
 	} `json:"resource"`
-	Version *struct {
-		Version string `json:"version"`
-		Status  string `json:"status"`
-	} `json:"version"`
+	Version *versionInfo `json:"version"`
 }
 
-func getVersion(client *http.Client, origin string) (*struct {
-	Version string `json:"version"`
-	Status  string `json:"status"`
-}, error) {
+func getVersion(client *http.Client, origin string) (*versionInfo, error) {
 	query := url.Values{"namespace": {namespace}, "name": {name}, "version": {version}}
 	response, err := request(client, http.MethodGet, origin+"/skill/v1/skills?"+query.Encode(), nil)
 	if err != nil {
@@ -176,78 +262,12 @@ func getVersion(client *http.Client, origin string) (*struct {
 		return nil, nil
 	}
 	if response.Code != 200000 {
-		return nil, fmt.Errorf("get Skill failed: code=%d info=%s", response.Code, response.Info)
+		return nil, fmt.Errorf("get Skill: code=%d info=%s", response.Code, response.Info)
 	}
 	if response.Resource == nil || response.Resource.Ext[ownerKey] != owner {
-		return nil, fmt.Errorf("skill %s is not owned by this example", name)
+		return nil, fmt.Errorf("skill %s/%s is not owned by this example", namespace, name)
 	}
 	return response.Version, nil
-}
-
-func waitForVersion(client *http.Client, origin string, wait time.Duration) (*struct {
-	Version string `json:"version"`
-	Status  string `json:"status"`
-}, error) {
-	deadline := time.Now().Add(wait)
-	for {
-		item, err := getVersion(client, origin)
-		if err == nil && item != nil {
-			return item, nil
-		}
-		if time.Now().After(deadline) {
-			if err != nil {
-				return nil, err
-			}
-			return nil, errors.New("skill version was not visible before timeout")
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-}
-
-func waitForSkillDataPlane() error {
-	discover := net.JoinHostPort(server, fmt.Sprint(grpcPort))
-	address := skillAddr
-	if address == "" {
-		address = net.JoinHostPort(server, "8094")
-	}
-	sdk, err := demo.NewSDK(discover, address, true, timeout)
-	if err != nil {
-		return fmt.Errorf("create Skill data-plane client: %w", err)
-	}
-	defer sdk.Destroy()
-	skills := api.NewSkillAPIByContext(sdk)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	var last error
-	for {
-		resource, err := skills.GetSkill(&api.GetSkillRequest{GetSkillRequest: model.GetSkillRequest{
-			Namespace: namespace, Name: name, Version: version,
-		}})
-		if err != nil {
-			last = err
-		} else if resource == nil || resource.Namespace != namespace || resource.Name != name || resource.Version != version {
-			last = errors.New("published Skill identity is not visible on the data plane")
-		} else {
-			pkg, err := skills.DownloadSkill(&api.SkillDownloadRequest{SkillDownloadRequest: model.SkillDownloadRequest{
-				Namespace: namespace, Name: name, Version: version, Format: model.SkillFormatZIP,
-			}})
-			if err != nil {
-				last = err
-			} else if pkg == nil || pkg.Format != model.SkillFormatZIP || pkg.ContentType != model.SkillContentTypeZIP ||
-				len(pkg.Content) == 0 || len(pkg.Digest) != 64 {
-				last = errors.New("published Skill package is not visible on the data plane")
-			} else {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("skill data plane did not become ready: %w; last error: %v", ctx.Err(), last)
-		case <-ticker.C:
-		}
-	}
 }
 
 func ensureNamespace(client *http.Client, origin string) error {
@@ -258,60 +278,57 @@ func ensureNamespace(client *http.Client, origin string) error {
 		return err
 	}
 	if response.Code != 200000 && response.Code != 400201 {
-		return fmt.Errorf("create namespace failed: code=%d info=%s", response.Code, response.Info)
+		return fmt.Errorf("create namespace: code=%d info=%s", response.Code, response.Info)
 	}
 	return nil
 }
 
-func newClient() (*http.Client, string, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	return &http.Client{
-			Transport: transport,
-			Timeout:   timeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
-		"http://" + net.JoinHostPort(server, fmt.Sprint(httpPort)),
-		nil
-}
-
 func request(client *http.Client, method, target string, payload any) (*envelope, error) {
-	var body []byte
-	var err error
+	var body io.Reader
 	if payload != nil {
-		body, err = json.Marshal(payload)
+		raw, err := json.Marshal(payload)
 		if err != nil {
 			return nil, err
 		}
+		body = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequest(method, target, bytes.NewReader(body))
+	req, err := http.NewRequest(method, target, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if token := firstToken(); token != "" {
+	if token := firstEnv("POLARIS_CONSOLE_TOKEN", "POLARIS_TOKEN"); token != "" {
 		req.Header.Set("X-Polaris-Token", token)
 	}
-	resp, err := client.Do(req)
+	response, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	defer func() { _ = response.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
 	if err != nil {
-		return nil, fmt.Errorf("read Console response: %w", err)
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("console HTTP %s %s returned %d: %s",
+			method, target, response.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var result envelope
-	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("decode Console response: %w", err)
 	}
 	return &result, nil
 }
 
-func firstToken() string {
-	for _, key := range []string{"POLARIS_CONSOLE_TOKEN", "POLARIS_TOKEN", "POLARIS_SERVICE_TOKEN"} {
+func newClient() (*http.Client, string, error) {
+	origin := demo.ConsoleAddress(server, consolePort)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return &http.Client{Transport: transport, Timeout: timeout}, origin, nil
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 			return value
 		}

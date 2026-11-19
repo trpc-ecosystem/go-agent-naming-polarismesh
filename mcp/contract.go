@@ -43,20 +43,32 @@ func CollectContract(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if connector == nil {
 		return nil, errors.New("MCP connector is required")
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	features, err := collectFeatures(ctx, connector)
+	capabilities, err := contractCapabilities(connector, config)
 	if err != nil {
 		return nil, err
 	}
-	interfaces, notifications := contractInterfaces(config)
+	ctx, cancel := context.WithTimeout(ctx, config.Timeout)
+	defer cancel()
+	features, err := collectFeatures(ctx, connector, capabilities)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	interfaces, notifications := contractInterfaces(config, capabilities)
 	contract := &model.ServiceContract{
 		GetServiceContractRequest: model.GetServiceContractRequest{
-			Name:      config.Service,
+			Name:      mcpContractType,
 			Namespace: config.Namespace,
 			Service:   config.Service,
 			Protocol:  string(config.Transport),
@@ -186,7 +198,7 @@ func GetContractWithConfig(
 		GetServiceContractRequest: model.GetServiceContractRequest{
 			Namespace: config.Namespace,
 			Service:   config.Service,
-			Name:      config.Service,
+			Name:      mcpContractType,
 			Type:      mcpContractType,
 			Protocol:  string(config.Transport),
 			Version:   config.ServerVersion,
@@ -197,11 +209,28 @@ func GetContractWithConfig(
 	return GetContract(ctx, consumer, req)
 }
 
-func collectFeatures(ctx context.Context, connector trpcmcp.Connector) ([]*model.ServiceFeature, error) {
+func contractCapabilities(connector trpcmcp.Connector, config Config) (trpcmcp.ServerCapabilities, error) {
+	if provider, ok := connector.(ServerCapabilitiesProvider); ok {
+		if capabilities, initialized := provider.ServerCapabilities(); initialized {
+			return capabilities, nil
+		}
+		return trpcmcp.ServerCapabilities{}, errors.New("MCP initialization capabilities are unavailable: connector is not initialized or is closed")
+	}
+	if config.ServerCapabilities != nil {
+		return cloneServerCapabilities(*config.ServerCapabilities), nil
+	}
+	return trpcmcp.ServerCapabilities{}, errors.New("MCP initialization capabilities are unavailable; use an initialized adapter client or set Config.ServerCapabilities for an external connector")
+}
+
+func collectFeatures(
+	ctx context.Context,
+	connector trpcmcp.Connector,
+	capabilities trpcmcp.ServerCapabilities,
+) ([]*model.ServiceFeature, error) {
 	var features []*model.ServiceFeature
 	var toolsCursor trpcmcp.Cursor
 	toolsCursors := make(map[trpcmcp.Cursor]struct{})
-	for {
+	for capabilities.Tools != nil {
 		request := &trpcmcp.ListToolsRequest{}
 		request.Params.Cursor = toolsCursor
 		result, err := connector.ListTools(ctx, request)
@@ -240,7 +269,7 @@ func collectFeatures(ctx context.Context, connector trpcmcp.Connector) ([]*model
 	}
 	var resourcesCursor trpcmcp.Cursor
 	resourcesCursors := make(map[trpcmcp.Cursor]struct{})
-	for {
+	for capabilities.Resources != nil {
 		request := &trpcmcp.ListResourcesRequest{}
 		request.Params.Cursor = resourcesCursor
 		result, err := connector.ListResources(ctx, request)
@@ -284,7 +313,7 @@ func collectFeatures(ctx context.Context, connector trpcmcp.Connector) ([]*model
 	}
 	var promptsCursor trpcmcp.Cursor
 	promptsCursors := make(map[trpcmcp.Cursor]struct{})
-	for {
+	for capabilities.Prompts != nil {
 		request := &trpcmcp.ListPromptsRequest{}
 		request.Params.Cursor = promptsCursor
 		result, err := connector.ListPrompts(ctx, request)
@@ -353,18 +382,25 @@ func nextPageCursor(
 	return next, false, nil
 }
 
-func contractInterfaces(config Config) ([]*model.InterfaceDescriptor, []string) {
-	methods := []string{
-		trpcmcp.MethodToolsList,
-		trpcmcp.MethodToolsCall,
-		trpcmcp.MethodResourcesList,
-		trpcmcp.MethodResourcesRead,
-		trpcmcp.MethodResourcesTemplatesList,
-		trpcmcp.MethodPromptsList,
-		trpcmcp.MethodPromptsGet,
-		"notifications/tools/list_changed",
-		"notifications/resources/list_changed",
-		"notifications/prompts/list_changed",
+func contractInterfaces(config Config, capabilities trpcmcp.ServerCapabilities) ([]*model.InterfaceDescriptor, []string) {
+	var methods []string
+	if capabilities.Tools != nil {
+		methods = append(methods, trpcmcp.MethodToolsList, trpcmcp.MethodToolsCall)
+		if capabilities.Tools.ListChanged {
+			methods = append(methods, "notifications/tools/list_changed")
+		}
+	}
+	if capabilities.Resources != nil {
+		methods = append(methods, trpcmcp.MethodResourcesList, trpcmcp.MethodResourcesRead, trpcmcp.MethodResourcesTemplatesList)
+		if capabilities.Resources.ListChanged {
+			methods = append(methods, "notifications/resources/list_changed")
+		}
+	}
+	if capabilities.Prompts != nil {
+		methods = append(methods, trpcmcp.MethodPromptsList, trpcmcp.MethodPromptsGet)
+		if capabilities.Prompts.ListChanged {
+			methods = append(methods, "notifications/prompts/list_changed")
+		}
 	}
 	descriptors := make([]*model.InterfaceDescriptor, 0, len(methods))
 	notifications := make([]string, 0, len(methods))

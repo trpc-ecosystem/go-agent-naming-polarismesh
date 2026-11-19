@@ -71,6 +71,7 @@ func RegisterProvider(
 		EnableRegister: true,
 		HeartBeat:      1,
 		TTL:            ttlSeconds,
+		ServiceToken:   os.Getenv("POLARIS_SERVICE_TOKEN"),
 	})
 	if err != nil {
 		return nil, err

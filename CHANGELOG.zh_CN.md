@@ -8,20 +8,22 @@
 
 - 增加 Runtime 配置、可选的 SDK Context 所有权和生命周期管理。
 - 构建并校验 A2A 0.3/1.0 AgentCard、完整的多接口 Card、原始 JSON
-  和签名保留，以及三键实例元数据契约。
+  和签名保留，以及三个 AgentCard 元数据键。
+- 接受 SDK 实例 metadata 中提升的 `version`、`region`、`zone` 和 `campus`
+  平台字段，同时拒绝其他未知 metadata 键。
 - 将动态元数据 Provider 与 `go-naming-polarismesh` 集成。
 - 增加元数据、host、版本、注册端口、协议和 TTL 的原子快照，并将默认注册端口
   设为 `1`，实例协议保持为空。
 - 扩展层独占 AgentCard/A2A/MCP 准备及静态配置冲突策略，通过通用快照接入 naming
   唯一实例生命周期 owner；naming 不再解析 Card 或分类 metadata。
-- 增加 `WithAgentInstanceMetadata`，显式转换静态三键及 legacy 四键输入，
-  保留原始 Card JSON，旧输入必须指定 schema 且成功准备后发出迁移告警。
-- 增加 MCP `PrepareRegistryConfig` 生成多个普通 endpoint，以及原生 Streamable
-  HTTP/SSE 双 transport 示例和生命周期验证脚本。
-- 保护 MCP SSE 示例的 response writer，拒绝 HTTP handler 返回后的写入，
-  并补充原生 wire 调用与并发退出的 race 回归。
-- 固定已合入 Core 的可获取版本并移除 Core filesystem replace；CI 只保留
-  matching naming 分支依赖，naming 发布与独立 checkout 仍为单独门禁。
+- 增加 `WithAgentInstanceMetadata`，仅接受静态三个 AgentCard 元数据键并保留
+  原始 Card JSON。
+- 按官方示例风格重写可运行示例，覆盖 LLM Agent 的 A2A、MCP Service Contract
+  与工具发现，以及 Skill 发布、安装和加载流程。
+- 将单体 E2E 运行器替换为 A2A、MCP、Skill 和 A2A AgentCard 四个真实服务
+  集成套件，使用确定性或脚本化模型并只清理本轮创建的资源。
+- 将 `polaris-go` 和 `go-naming-polarismesh` 固定到可获取的 main 快照，
+  升级 tRPC-Go 到 v1.1.0，并移除 filesystem replace。
 - 增加由适配层维护的 `AgentAPI`，使用 ConsumerAPI 完成默认服务读取，并
   通过借用的 SDK Context 集成 SkillAPI。移除 Core 中的
   ServiceAdminAPI 和 AgentAPI 后，将 Console 管理、请求模型、配置和回归
@@ -47,16 +49,31 @@
   `ConsumerAPI.GetServiceContract`。
 - 为 MCP 初始化和工具调用增加超时限制，在连接池刷新或关闭期间保护正在
   使用的连接器，并将 MCP 结果级错误上报为失败。
+- MCP Connector 请求串行执行，排队支持取消与超时，保留初始化能力，并仅采集、
+  投影已声明的契约能力。禁用不安全的独立 Streamable HTTP GET SSE，保留
+  POST SSE 及旧版 SSE；使用 MCP v0.0.17 修正 stdio 进程关闭竞争。
+- 发现结果保留完整 AgentCard 和默认流式行为，非法接口版本不再触发 panic；
+  Skill 分页按原始窗口推进，刷新器的启动、关闭和任务排空由 Runtime 统一管理。
 - 保留旧的 mounted 与显式 Skill 合并行为，并让空或重叠的 Skill 刷新
   以确定的方式收敛。
 - MCP 通知名称超过 Polaris 32 字符 InterfaceDescriptor 方法名限制时，
   在 Contract JSON 中保留完整名称而不截断。
 - 增加 A2A 客户端和服务端辅助工具。
-- 增加可直接运行的 quickstart、真实 Skill、取消和 MCP Demo，并提供
-  双语指南和受保护的清理流程。
-- 增加包含 28 个用例的真实 Polaris E2E 套件，支持按运行状态限定清理
-  范围、校验 Provider 身份，并显式删除 Service/Skill。
-- 使用显式空 `extended_metadata` 清理服务 Skill 引用时，要求 Polaris
+- 增加 `a2a-agentcard` 示例：已注册 Agent A 调用两个不同版本的已注册
+  Agent B，并提供双语指南和受保护的清理流程。
+- 增加按 build tag 隔离的 A2A、MCP、Skill 和已注册 Agent A/B 链路集成
+  套件、共享真实北极星 harness，以及按测试清理自有资源的机制。
+- 将用户可运行程序统一放在 `examples/`，将完整真实服务验证放在
+  `integration/`，并为两个目录维护双语指南。
+- 增加示例级和按 run ID 的清理脚本，支持 dry-run、实例身份、
+  Service Contract 和 Skill owner 校验。
+- 将 a2a-agentcard Provider 默认切换为 polaris-python 的 1.0/0.3 多接口
+  AgentCard 和 no-serve 注册；显式 `-role` 保留多版本 Agent A/B 流程。
+- 增加 `integration/verify_all.sh`，支持显式指定服务端、namespace、run ID
+  和单次操作超时。
+- 在可运行示例和独立的真实 a2a-agentcard 集成套件中覆盖已注册 Agent A
+  调用 Agent B 的嵌套链路。
+- 记录使用显式空 `extended_metadata` 清理服务 Skill 引用时要求 Polaris
   `v2.2.0.0` 或更新版本。
 - 增加测试、race 验证、README 文档和 CI。
 - 要求 Go 1.21。

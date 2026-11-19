@@ -23,6 +23,12 @@ import (
 )
 
 // NewClient creates and initializes one MCP client for a network endpoint.
+// Connector operations are serialized with cancellable, bounded admission.
+// Independent Streamable HTTP GET SSE is disabled because the pinned SDK
+// accesses its session and event state without synchronization. POST SSE
+// responses and the legacy SSE transport remain supported.
+// Synchronous callbacks must enqueue requests instead of issuing them through
+// the same connector while its current request is still in progress.
 func NewClient(
 	ctx context.Context,
 	config Config,
@@ -49,6 +55,9 @@ func NewClient(
 	}
 	options = append(options, config.ClientOptions...)
 	options = append(options, trpcmcp.WithProtocolVersion(config.ProtocolVersion))
+	if config.Transport == TransportStreamableHTTP {
+		options = append(options, trpcmcp.WithClientGetSSEEnabled(false))
+	}
 	switch config.Transport {
 	case TransportSSE:
 		connector, err = trpcmcp.NewSSEClient(endpoint, config.ClientInfo, options...)
@@ -60,6 +69,7 @@ func NewClient(
 	if err != nil {
 		return nil, fmt.Errorf("create MCP client: %w", err)
 	}
+	connector = manageConnector(connector, config.Timeout)
 	_, err = initializeConnectorBounded(ctx, config, connector)
 	if err != nil {
 		_ = closeConnectorBounded(connector, config.Timeout)
@@ -101,7 +111,7 @@ func initializeConnector(
 	}
 	if sender, ok := connector.(interface {
 		SendInitialized(context.Context) error
-	}); ok {
+	}); ok && connector.GetState() != trpcmcp.StateInitialized {
 		if err := sender.SendInitialized(ctx); err != nil {
 			return nil, fmt.Errorf("send MCP initialized notification: %w", err)
 		}
@@ -322,5 +332,5 @@ func NewStdioClient(
 	if err != nil {
 		return nil, err
 	}
-	return client, nil
+	return manageConnector(client, config.Timeout), nil
 }

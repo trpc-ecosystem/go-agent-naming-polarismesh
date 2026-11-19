@@ -95,9 +95,9 @@ func WithAgentCardJSON(version string, raw []byte) Option {
 	}
 }
 
-// WithAgentInstanceMetadata migrates static three-key or legacy four-key
-// registration metadata. Legacy input requires an explicit schema version.
-// Remove these keys from the naming configuration before installing the runtime.
+// WithAgentInstanceMetadata supplies canonical three-key static registration
+// metadata. Remove these keys from the naming configuration before installing
+// the runtime.
 func WithAgentInstanceMetadata(version string, metadata map[string]string) Option {
 	return func(options *runtimeOptions) {
 		options.agentMetadata = make(map[string]string, len(metadata))

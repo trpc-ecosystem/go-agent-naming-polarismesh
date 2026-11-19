@@ -12,6 +12,7 @@ package registration
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/polarismesh/polaris-go/pkg/model"
 	"trpc.group/trpc-go/trpc-agent-naming-polarismesh/agentcard"
@@ -105,10 +106,15 @@ func validateStaticMetadata(cfg *polarisregistry.Config) error {
 	}
 	keys := []string{
 		agentcard.MetadataAgentName, agentcard.MetadataAgentCard, agentcard.MetadataA2AVersion,
-		agentcard.MetadataLegacyAgentCard, agentcard.MetadataLegacyTransport, agentcard.MetadataLegacyPath,
 		model.MCPMetadataKeyServerName, model.MCPMetadataKeyProtocolVersion, model.MCPMetadataKeyEndpointPath,
 	}
 	for _, values := range metadata {
+		for key := range values {
+			if strings.HasPrefix(key, "a2a.") {
+				return fmt.Errorf("static register metadata for service %q contains reserved agent key %q while a metadata provider is registered",
+					cfg.ServiceName, key)
+			}
+		}
 		for _, key := range keys {
 			if _, exists := values[key]; exists {
 				return fmt.Errorf("static register metadata for service %q contains reserved agent key %q while a metadata provider is registered",

@@ -1,86 +1,97 @@
 English | [Chinese](README.zh_CN.md)
 
-# Skill Demo
+# Agent Skill From Polaris
 
-This example downloads and installs a published Skill from the real Polaris
-Skill Registry, then executes it through a deterministic A2A Agent.
+This example follows the official `trpc-agent-go` Skill examples:
 
-No LLM key is required. The Skill body itself is returned over A2A as evidence
-that the content came from Polaris.
+```text
+publish -> Polaris Skill Registry
+agent   -> SkillAPI.Install -> installed files -> Runtime.SkillRepository
+        -> llmagent.WithSkills -> skill_load -> A2A Server -> Polaris
+```
 
-## Run manually
+The published Skill contains `SKILL.md`, a reference document, and a script.
+The Agent loads the Skill on demand through the normal `skill_load` tool.
 
-Set the Polaris host:
+## Prerequisites
+
+- Go 1.21+.
+- A Polaris deployment with Skill Registry support.
+- An OpenAI-compatible model endpoint.
 
 ```bash
 export POLARIS_SERVER=your-polaris-host
+export OPENAI_API_KEY=your-key
+export OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
 ```
 
-Skill gRPC defaults to port `8094`. Override it with
-`POLARIS_SKILL_GRPC_PORT` for `verify.sh`, or `-skill-address` for the direct
-commands when the deployment uses another port.
+## Run
 
-Publish the demo Skill:
+Publish the Skill:
 
 ```bash
-go run ./examples/skill/publish \
-  -server "$POLARIS_SERVER" \
-  -namespace go-naming-polarismesh-skill-demo \
-  -skill trpc-agent-naming-demo-skill \
-  -skill-version 1.0.0
+go run ./examples/skill/publish
 ```
 
-Start the Provider:
+Start the Agent:
 
 ```bash
-go run ./examples/skill/provider \
-  -server "$POLARIS_SERVER" \
-  -namespace go-naming-polarismesh-skill-demo \
-  -service trpc.polaris.demo.skill \
-  -skill trpc-agent-naming-demo-skill \
-  -skill-version 1.0.0
+go run ./examples/skill/agent
 ```
 
-Run the Client:
+Call it through Polaris:
 
 ```bash
-go run ./examples/skill/client \
-  -server "$POLARIS_SERVER" \
-  -namespace go-naming-polarismesh-skill-demo \
-  -service trpc.polaris.demo.skill \
-  -skill trpc-agent-naming-demo-skill \
-  -skill-version 1.0.0
+go run ./examples/skill/client
 ```
 
-The Provider:
+The Client asks for the Polaris greeting. The Agent should load
+`polaris-greeting` and return the marker from the published `SKILL.md`.
 
-- uses `SkillRefs` and `SkillAPI.Install`;
-- downloads the real ZIP from Polaris;
-- installs it into `-skill-cache`;
-- opens the installed `skill.Repository`;
-- returns the downloaded `SKILL.md` body through A2A;
-- publishes the three-key AgentCard metadata with registration port `1` and an
-  empty instance protocol by default.
+## What Runtime.Prepare Does
 
-Use `-registration-port` or `POLARIS_AI_A2A_REGISTRATION_PORT` to change the
-Polaris instance port. Keep `-protocol-binding JSONRPC` on the Client unless
-the AgentCard exposes a different compatible interface.
+The Agent uses `SkillMode=names` with one explicit reference:
 
-## Verify
+```go
+cfg.SkillMode = adapterconfig.SkillModeNames
+cfg.SkillRefs = []adapterconfig.SkillRef{{
+    Namespace: "go-agent-naming-examples",
+    Name:      "polaris-greeting",
+    Version:   "1.0.0",
+}}
+cfg.SkillCacheDir = "./.skill-cache"
+```
+
+`Prepare` calls the real Skill data plane, installs the pinned version, and
+returns a `skill.Repository`. That repository is passed directly to
+`llmagent.WithSkills(repo)`. No Skill body is copied into the example source
+after publication.
+
+The adapter also supports `published` mode (page through every published Skill
+in the namespace) and `mounted` mode (read `extended_metadata` from the
+AI_AGENT service). This example uses `names` so the installed set stays
+isolated and reproducible.
+
+## Cleanup
 
 ```bash
-./examples/skill/verify.sh --polaris-server "$POLARIS_SERVER"
 ./examples/skill/cleanup.sh --dry-run
-./examples/skill/cleanup.sh --force
 ./examples/skill/cleanup.sh --force --delete-service --polaris-server "$POLARIS_SERVER"
 ```
 
-The verify script creates the shared E2E namespace, publishes the Skill, starts
-the Provider, checks the installed content over A2A, and leaves the Provider
-running. Default cleanup stops that process and removes local artifacts;
-`--delete-service` also removes the demo Skill and remote service.
+The script deletes the Agent service and the Skill. It checks the
+`examples.owner` field before deleting the Skill.
 
-The publisher waits until the published Skill is readable and downloadable
-through the Skill data plane, not only through Console.
+## Useful Flags
 
-See [test.md](test.md) for the cases.
+| Flag | Default |
+| --- | --- |
+| `-namespace` | `go-agent-naming-examples` |
+| `-skill` | `polaris-greeting` |
+| `-skill-version` | `1.0.0` |
+| `-service` | `trpc.polaris.examples.skill-agent` |
+| `-skill-cache` | system temp directory |
+| `-port` | `18193` |
+
+See the [Skill integration suite](../../integration/skill/e2e_test.go) for the
+publish, install, `skill_load`, and model-injection assertion.

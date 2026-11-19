@@ -127,7 +127,7 @@ func NormalizeAgentCardSchemaVersion(value string) (string, error) {
 
 // ParseAgentCard 按卡片结构推断 schema 版本并严格解析。
 //
-// 该方法保留给旧四键兼容读取；新注册路径应使用 ParseAgentCardByVersion。
+// 新注册路径应优先使用 ParseAgentCardByVersion，明确传入 schema。
 func ParseAgentCard(cardJSON string) (*AgentCard, error) {
 	fields, err := decodeAgentCardFields(cardJSON)
 	if err != nil {

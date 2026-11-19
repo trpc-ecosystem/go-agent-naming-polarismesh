@@ -78,6 +78,33 @@ func TestResolverStickyAndRemoval(t *testing.T) {
 	require.Equal(t, remainingID, switched.InstanceID)
 }
 
+func TestResolverAcceptsPromotedPlatformMetadata(t *testing.T) {
+	metadata := agentcardtest.CardMetadata(t, "127.0.0.1", 18086)
+	metadata["version"] = "1.0.0"
+	metadata["region"] = ""
+	metadata["zone"] = ""
+	metadata["campus"] = ""
+	instance := testutil.InstanceWithMetadata(
+		"platform-metadata",
+		"127.0.0.1",
+		18086,
+		true,
+		false,
+		metadata,
+	)
+	lister := &testutil.FakeInstanceLister{Responses: []*model.InstancesResponse{
+		testutil.InstancesResponse(instance),
+	}}
+	resolver, err := newTestResolver(lister)
+	require.NoError(t, err)
+
+	resolved, err := resolver.Resolve(context.Background(), "caller")
+	require.NoError(t, err)
+	require.Equal(t, "platform-metadata", resolved.InstanceID)
+	require.Equal(t, "http://127.0.0.1:18086/a2a", resolved.Endpoint)
+	require.Equal(t, "1.0.0", resolved.Metadata["version"])
+}
+
 func TestResolverSkipsBadCardsAndUnhealthyInstances(t *testing.T) {
 	bad := testutil.InstanceWithMetadata(
 		"bad-card",

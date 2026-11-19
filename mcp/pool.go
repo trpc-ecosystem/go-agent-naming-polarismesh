@@ -37,7 +37,9 @@ type PoolConfig struct {
 	Consumer        InstanceLister
 	Reporter        api.ConsumerAPI
 	RefreshInterval time.Duration
-	ClientFactory   func(context.Context, Config, string) (trpcmcp.Connector, error)
+	// ClientFactory returns an owned, initialized connector. Custom connectors
+	// must honor request contexts and synchronize their background callbacks.
+	ClientFactory func(context.Context, Config, string) (trpcmcp.Connector, error)
 }
 
 // InstanceEvent describes one pool watch cycle.
@@ -395,6 +397,11 @@ func (p *Pool) clientForTarget(ctx context.Context, target mcpTarget) (*pooledCl
 	if client == nil {
 		return nil, errors.New("MCP client factory returned a nil connector")
 	}
+	if _, bareHTTPClient := client.(*trpcmcp.Client); bareHTTPClient && config.Transport == TransportStreamableHTTP {
+		_ = closeConnectorBounded(client, config.Timeout)
+		return nil, errors.New("MCP streamable HTTP factories must use mcp.NewClient to protect SDK session state")
+	}
+	client = manageConnector(client, config.Timeout)
 	return &pooledClient{
 		instance:        target.instance,
 		endpoint:        target.endpoint,

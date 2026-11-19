@@ -44,10 +44,14 @@ func (p *instanceRecorder) Deregister(*api.InstanceDeRegisterRequest) error {
 	return nil
 }
 
-func TestMCPMetadataRejectsAgentKeysInExtension(t *testing.T) {
+func TestMCPMetadataRejectsA2AReservedKeysInExtension(t *testing.T) {
 	cfg := testConfig()
-	for _, key := range []string{agentcard.MetadataAgentName, agentcard.MetadataAgentCard, agentcard.MetadataA2AVersion,
-		agentcard.MetadataLegacyAgentCard, agentcard.MetadataLegacyTransport, agentcard.MetadataLegacyPath} {
+	for _, key := range []string{
+		agentcard.MetadataAgentName,
+		agentcard.MetadataAgentCard,
+		agentcard.MetadataA2AVersion,
+		"a2a.custom",
+	} {
 		metadata, err := cfg.BuildServerMetadata()
 		require.NoError(t, err)
 		metadata[key] = "value"

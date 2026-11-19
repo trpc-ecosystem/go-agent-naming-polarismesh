@@ -36,6 +36,7 @@ type PeriodicRepository struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	done        chan struct{}
+	closeDone   chan struct{}
 	refreshGate chan struct{}
 	refreshes   sync.WaitGroup
 	closed      bool
@@ -54,13 +55,14 @@ func NewPeriodicRepository(
 	}
 	ctx, cancel := context.WithCancel(parent)
 	repository := &PeriodicRepository{
-		current:  initial,
-		interval: interval,
-		timeout:  timeout,
-		reload:   reload,
-		ctx:      ctx,
-		cancel:   cancel,
-		done:     make(chan struct{}),
+		current:   initial,
+		interval:  interval,
+		timeout:   timeout,
+		reload:    reload,
+		ctx:       ctx,
+		cancel:    cancel,
+		done:      make(chan struct{}),
+		closeDone: make(chan struct{}),
 	}
 	repository.refreshGate = make(chan struct{}, 1)
 	repository.refreshGate <- struct{}{}
@@ -131,12 +133,15 @@ func (r *PeriodicRepository) Refresh(ctx context.Context) error {
 	}
 	defer func() { r.refreshGate <- struct{}{} }()
 
-	r.mu.RLock()
-	closed := r.closed
-	r.mu.RUnlock()
-	if closed {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
 		return errors.New("skill repository is closed")
 	}
+	// Admission and Close use the same lock so Wait cannot miss this reload.
+	r.refreshes.Add(1)
+	r.mu.Unlock()
+	defer r.refreshes.Done()
 
 	reloadCtx, cancelReload, stopCallerWatch, err := r.reloadContext(ctx)
 	if err != nil {
@@ -145,8 +150,6 @@ func (r *PeriodicRepository) Refresh(ctx context.Context) error {
 	defer stopCallerWatch()
 	defer cancelReload()
 
-	r.refreshes.Add(1)
-	defer r.refreshes.Done()
 	next, err := r.reload(reloadCtx)
 	if err != nil {
 		return err
@@ -191,11 +194,13 @@ func (r *PeriodicRepository) Close() error {
 	r.closed = true
 	r.mu.Unlock()
 	if alreadyClosed {
+		<-r.closeDone
 		return nil
 	}
 	r.cancel()
 	r.refreshes.Wait()
 	<-r.done
+	close(r.closeDone)
 	return nil
 }
 

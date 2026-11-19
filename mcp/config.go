@@ -65,6 +65,9 @@ type Config struct {
 	Timeout              time.Duration
 	ClientInfo           trpcmcp.Implementation
 	ClientOptions        []trpcmcp.ClientOption
+	// ServerCapabilities supplies initialization capabilities for an external
+	// connector that does not implement ServerCapabilitiesProvider.
+	ServerCapabilities *trpcmcp.ServerCapabilities
 }
 
 // DefaultConfig returns MCP adapter defaults.
@@ -193,11 +196,9 @@ func (c Config) ValidateServer(metadata map[string]string) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	for _, key := range []string{
-		agentcard.MetadataAgentName, agentcard.MetadataAgentCard, agentcard.MetadataA2AVersion,
-		agentcard.MetadataLegacyAgentCard, agentcard.MetadataLegacyTransport, agentcard.MetadataLegacyPath,
-	} {
-		if _, exists := metadata[key]; exists {
+	for key := range metadata {
+		if key == agentcard.MetadataAgentName || key == agentcard.MetadataAgentCard ||
+			key == agentcard.MetadataA2AVersion || strings.HasPrefix(key, "a2a.") {
 			return fmt.Errorf("MCP metadata must not contain A2A reserved key %q", key)
 		}
 	}
