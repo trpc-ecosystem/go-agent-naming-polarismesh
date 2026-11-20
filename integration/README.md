@@ -29,7 +29,7 @@ the adapter Pool. No LLM API key is required.
 
 ## Requirements
 
-- Go 1.21+.
+- Go 1.21+ on the machine that builds and packages the tests.
 - A reachable Polaris deployment.
 - Discovery gRPC, Console HTTP, and Skill gRPC endpoints.
 - Permission to create services, instances, and Skills in a non-`default`
@@ -53,6 +53,15 @@ Environment variables:
 
 ## Run
 
+Build every integration suite and AgentCard example before running:
+
+```bash
+make -C integration build
+```
+
+This writes `integration/bin/<os>-<arch>/`. Runtime scripts only execute these
+binaries; they do not call `go test` or `go build`.
+
 ```bash
 export POLARIS_SERVER=your-polaris-host
 bash integration/verify_all.sh
@@ -61,14 +70,16 @@ bash integration/verify_all.sh
 Run one suite:
 
 ```bash
+make -C integration build
 POLARIS_SERVER=your-polaris-host \
-  go test -tags=integration -count=1 -v -timeout=10m ./integration/a2a
+  "integration/bin/$(go env GOOS)-$(go env GOARCH)/a2a.test" \
+  -test.count=1 -test.v -test.timeout=10m
 ```
 
-Compile without a server:
+Build without a server:
 
 ```bash
-go test -tags=integration -run '^$' ./integration/...
+make -C integration build
 ```
 
 `verify_all.sh` also accepts:
@@ -79,7 +90,71 @@ go test -tags=integration -run '^$' ./integration/...
 | `--namespace=name` | Sets `POLARIS_E2E_NAMESPACE` |
 | `--run-id=id` | Sets `POLARIS_E2E_RUN_ID` |
 | `--timeout=30s` | Sets per-operation timeout |
-| `-v` | Verbose `go test` output |
+| `--bin-dir=DIR` | Uses a specific prebuilt binary directory |
+| `-v` | Verbose test output |
+
+## Cloud Package
+
+This repository provides only the packaging step. Upload, deployment,
+execution, and cleanup are owned by the cloud test workflow.
+
+```bash
+# Build and package all tests for the cloud:
+make -C integration package TARGET=linux/amd64
+
+# Equivalent direct script:
+./integration/build-materials.sh --target=linux/amd64
+```
+
+The binary package is
+`integration/dist/go-agent-naming-integration-linux-amd64-bin.zip`. It contains
+all integration test executables and the AgentCard provider/client examples,
+so the cloud machine does not need Go. The target OS/architecture must match
+the cloud machine. Binaries are statically built with `CGO_ENABLED=0`.
+
+The package contains the integration tree, `PACKAGE-INFO.txt`, `Makefile`, and
+these cloud entrypoints:
+
+- `integration/verify_all.sh`
+- `integration/run_retained.sh`
+- `integration/cleanup.sh`
+- `integration/pack-logs.sh`
+
+The cloud machine needs `bash`, `curl`, `jq`, and `unzip`, plus network access
+to Polaris. It does not need Go.
+
+After cloud-side unpacking, use the existing entrypoints:
+
+```bash
+unzip go-agent-naming-integration-linux-amd64-bin.zip
+cd go-agent-naming-integration
+export POLARIS_SERVER=your-polaris-host
+bash integration/verify_all.sh --run-id cloud-verify-01
+
+# Or retain selected suites:
+bash integration/run_retained.sh \
+  --run-id cloud-inspect-01 \
+  --suite=a2a,mcp,skill,a2a-agentcard
+
+# Package logs for return to the local machine:
+bash integration/pack-logs.sh --run-id cloud-verify-01
+
+# Cloud-side cleanup:
+bash integration/cleanup.sh \
+  --run-id <run-id> \
+  --delete-service \
+  --force \
+  --polaris-server "$POLARIS_SERVER"
+```
+
+`verify_all.sh` writes `integration/.logs/<run-id>.log`.
+`run_retained.sh` writes `integration/.retained/<run-id>/`.
+`pack-logs.sh` collects both into
+`integration/dist/go-agent-naming-logs-<run-id>.tar.gz`, adds run metadata, and
+excludes retained token env files.
+
+Polaris tokens must be configured on the cloud machine. No token or access
+URL is embedded by `build-materials.sh`.
 
 ## Retain Processes and Resources
 
@@ -96,6 +171,8 @@ POLARIS_SERVER=your-polaris-host \
 Each selected suite runs in a detached process and blocks in keep mode after
 its checks succeed. The run ID and retained process manifest are stored below
 `integration/.retained/<run-id>/`. This command never performs cleanup.
+Re-running the same run ID and suite reuses an existing KEEP job and an
+already-published owned Skill; use a fresh run ID for an independent run.
 
 Stop retained processes and delete the run-scoped remote resources together:
 
