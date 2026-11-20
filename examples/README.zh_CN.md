@@ -13,8 +13,8 @@ Agent Skill 如何组合使用，而不是用确定性桩替代 Agent。
 | [skill](./skill) | 向北极星发布 Skill；LLM Agent 安装后用 `skill_load` 加载，并通过 A2A 提供服务 | 需要 |
 | [a2a-agentcard](./a2a-agentcard) | 已注册 Agent A 调用两个不同版本的已注册 Agent B，不需要 LLM | 不需要 |
 
-`a2a-agentcard` 的 Provider 默认验证 `polaris-python` 的多接口 A2A 场景；
-显式设置 `-role agent-a|agent-b` 才进入多版本调用流程。
+`a2a-agentcard` 的 Provider 默认验证北极星 AI 注册中心的 AgentCard
+多协议增强场景；显式设置 `-role agent-a|agent-b` 才进入多版本调用流程。
 
 ## 前置条件
 

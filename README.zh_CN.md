@@ -339,8 +339,8 @@ golangci-lint run ./...
 提供北极星地址。
 每个示例都提供支持 `--dry-run`、`--force` 和 `--delete-service` 的
 `cleanup.sh`。
-`a2a-agentcard` Provider 默认使用 polaris-python 的 1.0/0.3 多接口 A2A
-场景；显式设置 `-role agent-a|agent-b` 才进入多版本调用流程。
+`a2a-agentcard` Provider 默认验证北极星 AI 注册中心的 AgentCard 1.0/0.3
+多协议增强；显式设置 `-role agent-a|agent-b` 才进入多版本调用流程。
 
 ## 完整集成测试
 

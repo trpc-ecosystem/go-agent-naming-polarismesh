@@ -12,12 +12,12 @@ The `go test` process itself is the orchestrator and consumes Polaris through
 | Test | Child processes | Registered services |
 | --- | --- | --- |
 | `TestA2AAgentCardExampleAcrossProcesses` | 3 providers: Agent B v1, Agent B v2, Agent A; 1 client | `gan-e2e-<run-id>-agent-a`, `gan-e2e-<run-id>-agent-b` |
-| `TestPythonA2ACompatibilityProvider/schema-10` | 1 provider | `gan-e2e-<run-id>-python-a2a-10` |
-| `TestPythonA2ACompatibilityProvider/schema-03` | 1 provider | `gan-e2e-<run-id>-python-a2a-03` |
-| `TestPythonA2ACompatibilityProvider/no-serve` | 1 provider, no business listener | `gan-e2e-<run-id>-python-a2a-noserve` |
+| `TestAgentCardMultiProtocolProvider/schema-10` | 1 provider | `gan-e2e-<run-id>-agentcard-10` |
+| `TestAgentCardMultiProtocolProvider/schema-03` | 1 provider | `gan-e2e-<run-id>-agentcard-03` |
+| `TestAgentCardMultiProtocolProvider/no-serve` | 1 provider, no business listener | `gan-e2e-<run-id>-agentcard-noserve` |
 
 Agent A and Agent B v1 use registration port `1`; Agent B v2 uses registration
-port `2`. Python-compatibility instances use registration port `1`. Business
+port `2`. AgentCard multi-protocol instances use registration port `1`. Business
 A2A ports are randomly allocated.
 
 ## Integration Call Relationships
@@ -35,7 +35,7 @@ test process ─► client subprocess
 test process ─► ConsumerAPI ─► wait for healthy instances and verify metadata
 ```
 
-Python compatibility:
+AgentCard multi-protocol:
 
 ```text
 test process ─► provider subprocess ─► /.well-known/agent-card.json
@@ -92,25 +92,24 @@ Expected: Agent A returns one completed response containing both
 `b=v1.0.0:agent-b|v1.0.0|` and
 `b=v2.0.0:agent-b|v2.0.0|` sections. The Client reports `success: true`.
 
-## Default Python A2A Compatibility Cases
+## Default AgentCard Multi-Protocol Enhancement Cases
 
-The provider defaults to the scenario from
-`polaris-python/examples/a2a/README-zh.md` when `-role` is empty. These cases
-are implemented by the real integration suite in
+When `-role` is empty, the provider enables the Polaris AI Registry AgentCard
+multi-protocol enhancement. These cases are implemented by the real
+integration suite in
 [e2e_test.go](e2e_test.go).
 
 ### [case 2.1 multi-interface 1.0 card]
 
 Operation: start the provider without `-role` and with
-`-a2a-version 1.0`, optionally with a `-card` file copied from the Python
-verifier.
+`-a2a-version 1.0`, optionally with a `-card` file.
 
 Expected: one AgentCard contains `/a2a/v1` JSON-RPC 1.0, `/a2a/legacy`
 JSON-RPC 0.3, and `/rest` HTTP+JSON 1.0 on the same IP/business port. The
 instance metadata contains the three AgentCard keys, registration port `1`,
 empty protocol, and the card version. The card endpoint returns the same JSON.
-The three calls return the Python-compatible echo Message and
-`SendMessageResponse` shapes.
+The three calls return the expected echo Message and `SendMessageResponse`
+shapes.
 
 ### [case 2.2 multi-interface 0.3 card]
 

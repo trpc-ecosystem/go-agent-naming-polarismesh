@@ -10,7 +10,7 @@
 | [a2a](./a2a) | 北极星、loopback A2A | AgentCard metadata、发现、单次调用、流式输出、取消 |
 | [mcp](./mcp) | 北极星、loopback MCP | MCP metadata、Service Contract、发现、Pool 工具调用 |
 | [skill](./skill) | 北极星 Skill 数据面、loopback A2A | 发布、安装、Repository、`skill_load` 注入模型请求 |
-| [a2a-agentcard](./a2a-agentcard) | 北极星、loopback A2A | 已注册 Agent A 调用两个版本的 Agent B；Provider 默认模式验证 polaris-python 1.0/0.3 多接口场景 |
+| [a2a-agentcard](./a2a-agentcard) | 北极星、loopback A2A | 已注册 Agent A 调用两个版本的 Agent B；Provider 默认模式验证北极星 AI 注册中心的 AgentCard 1.0/0.3 多协议增强 |
 
 ## 用例文档
 
@@ -123,7 +123,7 @@ bash integration/cleanup.sh \
 ```
 
 按 run ID 清理会删除 A2A 服务、MCP 服务及其 Service Contract、Skill Agent
-服务、A2A AgentCard 服务、Python 兼容场景服务和已发布 Skill。自定义运行
+服务、A2A AgentCard 服务、AgentCard 多协议场景服务和已发布 Skill。自定义运行
 可以额外传 `--service` 和 `--skill`。
 
 ## 资源归属

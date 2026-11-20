@@ -71,8 +71,8 @@
   `integration/`，并为两个目录维护双语指南。
 - 增加示例级和按 run ID 的清理脚本，支持 dry-run、实例身份、
   Service Contract 和 Skill owner 校验。
-- 将 a2a-agentcard Provider 默认切换为 polaris-python 的 1.0/0.3 多接口
-  AgentCard 和 no-serve 注册；显式 `-role` 保留多版本 Agent A/B 流程。
+- 将 a2a-agentcard Provider 默认切换为北极星 AI 注册中心的 1.0/0.3
+  AgentCard 多协议增强和 no-serve 注册；显式 `-role` 保留多版本 Agent A/B 流程。
 - 增加 `integration/verify_all.sh`，支持显式指定服务端、namespace、run ID
   和单次操作超时。
 - 在可运行示例和独立的真实 a2a-agentcard 集成套件中覆盖已注册 Agent A

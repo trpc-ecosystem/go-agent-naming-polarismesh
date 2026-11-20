@@ -122,10 +122,12 @@ Client 输出：
 [a2a-agentcard 集成测试](../../integration/a2a-agentcard/e2e_test.go)
 覆盖。
 
-## 默认 Polaris Python A2A 兼容场景
+## 默认 AgentCard 多协议增强场景
 
-Provider 默认验证 `polaris-python/examples/a2a/README-zh.md` 描述的场景；
-需要多版本链路时改为显式设置 `-role agent-a` 或 `-role agent-b`：
+Provider 默认启用北极星 AI 注册中心的 AgentCard 多协议增强能力：
+同一个 Agent 服务实例可声明多套 A2A 协议接口，并通过一张 AgentCard
+对外发布。需要多版本链路时改为显式设置 `-role agent-a` 或
+`-role agent-b`：
 
 ```bash
 go run ./examples/a2a-agentcard/provider \
@@ -152,8 +154,7 @@ AgentCard 也可从 `/.well-known/agent-card.json` 读取。使用
 `-a2a-version 0.3` 选择 0.3 卡片 schema；增加
 `-no-serve -card /path/to/agent-card.json` 可以只注册外部卡片而不绑定服务。
 不带 `-no-serve` 时，`-card` 会保留文件中的 description、skills 等字段，
-只把三个 interface URL 改写为实际绑定的 host 和 port，对应 Python 示例的
-`--card --host --port` 流程。
+只把三个 interface URL 改写为实际绑定的 host 和 port。
 使用 `-card` 时，服务名和实例版本以卡片中的 `name`、`version` 为准，
 `-service`、`-version` 只作为兜底值。
 
@@ -170,7 +171,7 @@ go run ./examples/a2a-agentcard/provider \
 集成套件会分别启动 `1.0` 和 `0.3` 卡片，调用三个接口，并验证 no-serve
 模式原样保留 AgentCard 字节。
 
-手工启动兼容场景后，可通过 `--service` 让清理脚本删除对应服务：
+手工启动多协议增强服务后，可通过 `--service` 让清理脚本删除对应服务：
 
 ```bash
 ./examples/a2a-agentcard/cleanup.sh \

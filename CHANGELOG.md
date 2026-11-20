@@ -78,9 +78,9 @@ All notable changes to this project will be documented in this file.
   verification under `integration/`, with bilingual guides for each directory.
 - Add per-example and run-ID cleanup scripts with dry-run, instance identity,
   Service Contract, and Skill owner checks.
-- Make the a2a-agentcard provider default to the polaris-python 1.0/0.3
-  multi-interface AgentCard and no-serve registration; explicit `-role`
-  retains the multi-version Agent A/B flow.
+- Make the a2a-agentcard provider default to the Polaris AI Registry AgentCard
+  1.0/0.3 multi-protocol enhancement and no-serve registration; explicit
+  `-role` retains the multi-version Agent A/B flow.
 - Add `integration/verify_all.sh` for running the real suites with explicit
   server, namespace, run ID, and per-operation timeout settings.
 - Cover the nested Agent A to registered Agent B invocation path in both the

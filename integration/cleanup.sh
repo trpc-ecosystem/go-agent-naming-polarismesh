@@ -117,9 +117,9 @@ if [[ -n "${RUN_ID}" ]]; then
     cleanup_add_service "gan-e2e-${RUN_ID}-skill-agent"
     cleanup_add_service "gan-e2e-${RUN_ID}-agent-a"
     cleanup_add_service "gan-e2e-${RUN_ID}-agent-b"
-    cleanup_add_service "gan-e2e-${RUN_ID}-python-a2a-10"
-    cleanup_add_service "gan-e2e-${RUN_ID}-python-a2a-03"
-    cleanup_add_service "gan-e2e-${RUN_ID}-python-a2a-noserve"
+    cleanup_add_service "gan-e2e-${RUN_ID}-agentcard-10"
+    cleanup_add_service "gan-e2e-${RUN_ID}-agentcard-03"
+    cleanup_add_service "gan-e2e-${RUN_ID}-agentcard-noserve"
     cleanup_add_skill "gan-e2e-${RUN_ID}-skill"
 fi
 

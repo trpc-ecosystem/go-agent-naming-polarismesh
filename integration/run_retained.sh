@@ -20,7 +20,7 @@ Options:
   --run-id=id            Shared run ID for all retained services
   --namespace=name       Polaris namespace (default go-agent-naming-e2e)
   --suite=list           Comma-separated suites to start:
-                         a2a,mcp,skill,a2a-agentcard,python-10,python-03,python-noserve
+                         a2a,mcp,skill,a2a-agentcard,agentcard-10,agentcard-03,agentcard-noserve
   --start-timeout=secs   Wait for each suite to print its KEEP marker
   -h, --help             Show this help
 
@@ -224,12 +224,12 @@ start mcp ./integration/mcp
 start skill ./integration/skill
 start a2a-agentcard \
     -run '^TestA2AAgentCardExampleAcrossProcesses$' ./integration/a2a-agentcard
-start python-10 \
-    -run '^TestPythonA2ACompatibilityProvider$/^schema-10$' ./integration/a2a-agentcard
-start python-03 \
-    -run '^TestPythonA2ACompatibilityProvider$/^schema-03$' ./integration/a2a-agentcard
-start python-noserve \
-    -run '^TestPythonA2ACompatibilityProvider$/^no-serve$' ./integration/a2a-agentcard
+start agentcard-10 \
+    -run '^TestAgentCardMultiProtocolProvider$/^schema-10$' ./integration/a2a-agentcard
+start agentcard-03 \
+    -run '^TestAgentCardMultiProtocolProvider$/^schema-03$' ./integration/a2a-agentcard
+start agentcard-noserve \
+    -run '^TestAgentCardMultiProtocolProvider$/^no-serve$' ./integration/a2a-agentcard
 
 failures=0
 for record in ${STARTED[@]+"${STARTED[@]}"}; do

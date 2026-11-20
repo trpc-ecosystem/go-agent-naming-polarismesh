@@ -14,9 +14,9 @@ Agent with a deterministic stub.
 | [skill](./skill) | Publish a Skill to Polaris; an LLM Agent installs it, loads it with `skill_load`, and serves A2A | Yes |
 | [a2a-agentcard](./a2a-agentcard) | Registered Agent A calls two live versions of registered Agent B without an LLM | No |
 
-The `a2a-agentcard` provider defaults to the multi-interface A2A scenario used
-by `polaris-python`; explicit `-role agent-a|agent-b` selects the multi-version
-flow.
+The `a2a-agentcard` provider defaults to the Polaris AI Registry AgentCard
+multi-protocol enhancement; explicit `-role agent-a|agent-b` selects the
+multi-version flow.
 
 ## Prerequisites
 

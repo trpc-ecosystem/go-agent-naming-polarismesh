@@ -122,11 +122,12 @@ to delete both remote services after their owned instances are removed. See
 The same flow is covered by the real
 [a2a-agentcard integration suite](../../integration/a2a-agentcard/e2e_test.go).
 
-## Default Polaris Python A2A Compatibility
+## Default AgentCard Multi-Protocol Enhancement
 
-By default, the provider serves the scenario described by
-`polaris-python/examples/a2a/README-zh.md`. Set `-role agent-a` or
-`-role agent-b` to use the multi-version flow instead:
+By default, the provider enables the Polaris AI Registry AgentCard
+multi-protocol enhancement. One Agent service instance can declare multiple
+A2A protocol interfaces and publish them through one AgentCard. Set
+`-role agent-a` or `-role agent-b` to use the multi-version flow instead:
 
 ```bash
 go run ./examples/a2a-agentcard/provider \
@@ -155,7 +156,7 @@ The card is also served at `/.well-known/agent-card.json`. Use
 binding a server, add `-no-serve -card /path/to/agent-card.json`.
 Without `-no-serve`, `-card` keeps the file's description, skills, and other
 card fields while rewriting the three interface URLs to the bound host and
-port. This mirrors the `--card --host --port` flow in the Python example.
+port.
 When `-card` is present, the card's `name` and `version` determine the
 service and instance identity; `-service` and `-version` are fallbacks.
 
@@ -173,7 +174,7 @@ The integration suite starts the default mode with both `1.0` and `0.3` cards,
 invokes all three interfaces, and verifies that no-serve preserves the card
 bytes exactly.
 
-For a manually started compatibility service, pass its service name to the
+For a manually started multi-protocol service, pass its service name to the
 cleanup script:
 
 ```bash

@@ -132,7 +132,7 @@ func TestA2AAgentCardExampleAcrossProcesses(t *testing.T) {
 	harness.KeepIfRequested(t)
 }
 
-func TestPythonA2ACompatibilityProvider(t *testing.T) {
+func TestAgentCardMultiProtocolProvider(t *testing.T) {
 	cfg := harness.Load(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -150,7 +150,7 @@ func TestPythonA2ACompatibilityProvider(t *testing.T) {
 	for _, schema := range []string{"1.0", "0.3"} {
 		schema := schema
 		t.Run("schema-"+strings.ReplaceAll(schema, ".", ""), func(t *testing.T) {
-			service := cfg.Unique("python-a2a-" + strings.ReplaceAll(schema, ".", ""))
+			service := cfg.Unique("agentcard-" + strings.ReplaceAll(schema, ".", ""))
 			if err := cfg.EnsureService(service, model.ServiceTypeAIAgent); err != nil {
 				t.Fatalf("ensure AI_AGENT service %s: %v", service, err)
 			}
@@ -167,9 +167,9 @@ func TestPythonA2ACompatibilityProvider(t *testing.T) {
 				"-registration-port", "1",
 			}
 			if schema == "1.0" {
-				raw := writePythonA2ACardFile(
+				raw := writeMultiProtocolCardFile(
 					t, service, "1.0.0",
-					"Polaris Python A2A integration fixture", "a2a-e2e",
+					"Polaris AI Registry AgentCard integration fixture", "a2a-e2e",
 				)
 				cardPath := filepath.Join(t.TempDir(), "agent-card.json")
 				if err := os.WriteFile(cardPath, raw, 0o600); err != nil {
@@ -182,7 +182,7 @@ func TestPythonA2ACompatibilityProvider(t *testing.T) {
 					"-version", "1.0.0",
 				)
 			}
-			process := startExampleProcess(t, "python-a2a-"+strings.ReplaceAll(schema, ".", ""),
+			process := startExampleProcess(t, "agentcard-"+strings.ReplaceAll(schema, ".", ""),
 				providerBinary, withArgs(baseArgs, providerArgs...)...)
 			instances := waitHealthyInstances(t, cfg, consumer, service, 1, process)
 			instance := instances[0]
@@ -203,26 +203,26 @@ func TestPythonA2ACompatibilityProvider(t *testing.T) {
 				t.Errorf("instance protocol=%q, want empty", got)
 			}
 			cardRaw := metadata[model.MetadataKeyAIAgentCard]
-			var card pythonA2ACard
+			var card multiProtocolCard
 			if err := json.Unmarshal([]byte(cardRaw), &card); err != nil {
 				t.Fatalf("decode AgentCard: %v\n%s", err, cardRaw)
 			}
 			if schema == "1.0" {
-				if card.Description != "Polaris Python A2A integration fixture" ||
+				if card.Description != "Polaris AI Registry AgentCard integration fixture" ||
 					len(card.Skills) != 1 || card.Skills[0].ID != "a2a-e2e" {
 					t.Fatalf("live card did not preserve file content: %+v", card)
 				}
 			}
-			endpoints, endpointHost := pythonA2AEndpoints(t, card, schema)
+			endpoints, endpointHost := multiProtocolEndpoints(t, card, schema)
 
-			client := newPythonA2AClient()
-			servedCard := getPythonA2ACard(t, ctx, client, endpointHost)
+			client := newMultiProtocolClient()
+			servedCard := getMultiProtocolCard(t, ctx, client, endpointHost)
 			if strings.TrimSpace(servedCard) != strings.TrimSpace(cardRaw) {
 				t.Fatalf("served AgentCard differs from instance metadata\nserved:\n%s\nmetadata:\n%s",
 					servedCard, cardRaw)
 			}
 
-			v1 := postPythonA2A(t, ctx, client, endpoints["jsonrpc_v1"], map[string]any{
+			v1 := postMultiProtocol(t, ctx, client, endpoints["jsonrpc_v1"], map[string]any{
 				"jsonrpc": "2.0",
 				"id":      "v1",
 				"method":  "SendMessage",
@@ -232,9 +232,9 @@ func TestPythonA2ACompatibilityProvider(t *testing.T) {
 					"parts":     []any{map[string]any{"text": "v1"}},
 				}},
 			})
-			assertPythonA2A1Message(t, v1["result"], "A2A 1.0 JSONRPC echo: v1")
+			assertMultiProtocol1Message(t, v1["result"], "A2A 1.0 JSONRPC echo: v1")
 
-			legacy := postPythonA2A(t, ctx, client, endpoints["jsonrpc_v03"], map[string]any{
+			legacy := postMultiProtocol(t, ctx, client, endpoints["jsonrpc_v03"], map[string]any{
 				"jsonrpc": "2.0",
 				"id":      "v03",
 				"method":  "message/send",
@@ -245,22 +245,22 @@ func TestPythonA2ACompatibilityProvider(t *testing.T) {
 					"parts":     []any{map[string]any{"kind": "text", "text": "v03"}},
 				}},
 			})
-			assertPythonA2A03Message(t, legacy["result"], "A2A 0.3 JSONRPC echo: v03")
+			assertMultiProtocol03Message(t, legacy["result"], "A2A 0.3 JSONRPC echo: v03")
 
-			rest := postPythonA2A(t, ctx, client,
+			rest := postMultiProtocol(t, ctx, client,
 				strings.TrimSuffix(endpoints["http_json_v1"], "/")+"/message:send",
 				map[string]any{"message": map[string]any{
 					"messageId": "rest-request",
 					"role":      "ROLE_USER",
 					"parts":     []any{map[string]any{"text": "rest"}},
 				}})
-			assertPythonA2ARESTMessage(t, rest, "A2A 1.0 HTTP+JSON echo: rest")
+			assertMultiProtocolRESTMessage(t, rest, "A2A 1.0 HTTP+JSON echo: rest")
 			harness.KeepIfRequested(t)
 		})
 	}
 
 	t.Run("no-serve", func(t *testing.T) {
-		service := cfg.Unique("python-a2a-noserve")
+		service := cfg.Unique("agentcard-noserve")
 		if err := cfg.EnsureService(service, model.ServiceTypeAIAgent); err != nil {
 			t.Fatalf("ensure AI_AGENT service %s: %v", service, err)
 		}
@@ -270,16 +270,16 @@ func TestPythonA2ACompatibilityProvider(t *testing.T) {
 			}
 		})
 		cardPath := filepath.Join(t.TempDir(), "agent-card.json")
-		cardJSON := writePythonA2ACardFile(
+		cardJSON := writeMultiProtocolCardFile(
 			t, service, "1.0.0",
-			"external python-style A2A agent", "echo",
+			"external AgentCard A2A agent", "echo",
 		)
 		if err := os.WriteFile(cardPath, cardJSON, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		sdk := mustSDK(t, cfg, false)
 		consumer := api.NewConsumerAPIByContext(sdk)
-		process := startExampleProcess(t, "python-a2a-noserve", providerBinary, withArgs(baseArgs,
+		process := startExampleProcess(t, "agentcard-noserve", providerBinary, withArgs(baseArgs,
 			"-a2a-version", "1.0",
 			"-no-serve",
 			"-card", cardPath,
@@ -490,33 +490,33 @@ func (p *exampleProcess) tail() string {
 	return strings.Join(lines, "\n")
 }
 
-type pythonA2ACard struct {
-	Name                 string               `json:"name"`
-	Description          string               `json:"description"`
-	Version              string               `json:"version"`
-	SupportedInterfaces  []pythonA2AInterface `json:"supportedInterfaces"`
-	URL                  string               `json:"url"`
-	ProtocolVersion      string               `json:"protocolVersion"`
-	PreferredTransport   string               `json:"preferredTransport"`
-	AdditionalInterfaces []pythonA2AInterface `json:"additionalInterfaces"`
-	Skills               []pythonA2ASkill     `json:"skills"`
+type multiProtocolCard struct {
+	Name                 string                   `json:"name"`
+	Description          string                   `json:"description"`
+	Version              string                   `json:"version"`
+	SupportedInterfaces  []multiProtocolInterface `json:"supportedInterfaces"`
+	URL                  string                   `json:"url"`
+	ProtocolVersion      string                   `json:"protocolVersion"`
+	PreferredTransport   string                   `json:"preferredTransport"`
+	AdditionalInterfaces []multiProtocolInterface `json:"additionalInterfaces"`
+	Skills               []multiProtocolSkill     `json:"skills"`
 }
 
-type pythonA2AInterface struct {
+type multiProtocolInterface struct {
 	URL             string `json:"url"`
 	ProtocolBinding string `json:"protocolBinding"`
 	Transport       string `json:"transport"`
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
-type pythonA2ASkill struct {
+type multiProtocolSkill struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Tags        []string `json:"tags"`
 }
 
-func writePythonA2ACardFile(
+func writeMultiProtocolCardFile(
 	t *testing.T,
 	name, version, description, skillID string,
 ) []byte {
@@ -548,7 +548,7 @@ func writePythonA2ACardFile(
 		"skills": []map[string]any{{
 			"id":          skillID,
 			"name":        "A2A E2E",
-			"description": "Polaris Python A2A compatibility skill",
+			"description": "Polaris AI Registry AgentCard multi-protocol skill",
 			"tags":        []string{"polaris", "a2a", "e2e"},
 		}},
 	}
@@ -559,16 +559,16 @@ func writePythonA2ACardFile(
 	return raw
 }
 
-func (i pythonA2AInterface) binding() string {
+func (i multiProtocolInterface) binding() string {
 	if i.ProtocolBinding != "" {
 		return i.ProtocolBinding
 	}
 	return i.Transport
 }
 
-func pythonA2AEndpoints(
+func multiProtocolEndpoints(
 	t *testing.T,
-	card pythonA2ACard,
+	card multiProtocolCard,
 	schema string,
 ) (map[string]string, string) {
 	t.Helper()
@@ -642,13 +642,13 @@ func pythonA2AEndpoints(
 	return endpoints, origin
 }
 
-func newPythonA2AClient() *http.Client {
+func newMultiProtocolClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	return &http.Client{Transport: transport, Timeout: 10 * time.Second}
 }
 
-func getPythonA2ACard(
+func getMultiProtocolCard(
 	t *testing.T,
 	ctx context.Context,
 	client *http.Client,
@@ -676,7 +676,7 @@ func getPythonA2ACard(
 	return string(raw)
 }
 
-func postPythonA2A(
+func postMultiProtocol(
 	t *testing.T,
 	ctx context.Context,
 	client *http.Client,
@@ -714,7 +714,7 @@ func postPythonA2A(
 	return decoded
 }
 
-func assertPythonA2A1Message(t *testing.T, raw any, expected string) {
+func assertMultiProtocol1Message(t *testing.T, raw any, expected string) {
 	t.Helper()
 	result, ok := raw.(map[string]any)
 	if !ok {
@@ -724,7 +724,7 @@ func assertPythonA2A1Message(t *testing.T, raw any, expected string) {
 	if !ok {
 		t.Fatalf("SendMessageResponse.message=%T", result["message"])
 	}
-	assertPythonA2AParts(t, message, "ROLE_AGENT", "", expected)
+	assertMultiProtocolParts(t, message, "ROLE_AGENT", "", expected)
 	if _, exists := message["kind"]; exists {
 		t.Fatalf("1.0 Message must not contain kind: %v", message)
 	}
@@ -733,7 +733,7 @@ func assertPythonA2A1Message(t *testing.T, raw any, expected string) {
 	}
 }
 
-func assertPythonA2A03Message(t *testing.T, raw any, expected string) {
+func assertMultiProtocol03Message(t *testing.T, raw any, expected string) {
 	t.Helper()
 	message, ok := raw.(map[string]any)
 	if !ok {
@@ -742,16 +742,16 @@ func assertPythonA2A03Message(t *testing.T, raw any, expected string) {
 	if message["kind"] != "message" {
 		t.Fatalf("0.3 kind=%v, want message", message["kind"])
 	}
-	assertPythonA2AParts(t, message, "agent", "text", expected)
+	assertMultiProtocolParts(t, message, "agent", "text", expected)
 }
 
-func assertPythonA2ARESTMessage(t *testing.T, raw map[string]any, expected string) {
+func assertMultiProtocolRESTMessage(t *testing.T, raw map[string]any, expected string) {
 	t.Helper()
 	message, ok := raw["message"].(map[string]any)
 	if !ok {
 		t.Fatalf("SendMessageResponse.message=%T", raw["message"])
 	}
-	assertPythonA2AParts(t, message, "ROLE_AGENT", "", expected)
+	assertMultiProtocolParts(t, message, "ROLE_AGENT", "", expected)
 	if _, exists := message["kind"]; exists {
 		t.Fatalf("1.0 Message must not contain kind: %v", message)
 	}
@@ -760,7 +760,7 @@ func assertPythonA2ARESTMessage(t *testing.T, raw map[string]any, expected strin
 	}
 }
 
-func assertPythonA2AParts(
+func assertMultiProtocolParts(
 	t *testing.T,
 	message map[string]any,
 	role, partKind, expected string,

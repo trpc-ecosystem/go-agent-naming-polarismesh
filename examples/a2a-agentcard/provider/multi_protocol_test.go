@@ -22,9 +22,9 @@ import (
 	adapterconfig "trpc.group/trpc-go/trpc-agent-naming-polarismesh/config"
 )
 
-func TestBuildPythonA2ACard(t *testing.T) {
+func TestBuildMultiProtocolCard(t *testing.T) {
 	t.Run("1.0", func(t *testing.T) {
-		card, err := buildPythonA2ACard("document-agent", "1.0.0", "127.0.0.1", 18080, "1.0")
+		card, err := buildMultiProtocolCard("document-agent", "1.0.0", "127.0.0.1", 18080, "1.0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -42,7 +42,7 @@ func TestBuildPythonA2ACard(t *testing.T) {
 		}
 	})
 	t.Run("0.3", func(t *testing.T) {
-		card, err := buildPythonA2ACard("document-agent", "0.9.0", "127.0.0.1", 18080, "0.3")
+		card, err := buildMultiProtocolCard("document-agent", "0.9.0", "127.0.0.1", 18080, "0.3")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,8 +58,8 @@ func TestBuildPythonA2ACard(t *testing.T) {
 	})
 }
 
-func TestPythonA2AHandler(t *testing.T) {
-	card, err := buildPythonA2ACard("document-agent", "1.0.0", "127.0.0.1", 18080, "1.0")
+func TestMultiProtocolHandler(t *testing.T) {
+	card, err := buildMultiProtocolCard("document-agent", "1.0.0", "127.0.0.1", 18080, "1.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestPythonA2AHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := newPythonA2AHandler(string(raw))
+	handler := newMultiProtocolHandler(string(raw))
 
 	t.Run("agent card", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, "/.well-known/agent-card.json", nil)
@@ -83,23 +83,23 @@ func TestPythonA2AHandler(t *testing.T) {
 
 	t.Run("JSON-RPC 1.0", func(t *testing.T) {
 		body := `{"jsonrpc":"2.0","id":"v1","method":"SendMessage","params":{"message":{"messageId":"request","role":"ROLE_USER","parts":[{"text":"v1"}]}}}`
-		response := servePythonA2ARequest(t, handler, "/a2a/v1", body)
+		response := serveMultiProtocolRequest(t, handler, "/a2a/v1", body)
 		message := response["result"].(map[string]any)["message"].(map[string]any)
-		assertPythonA2AMessage(t, message, "ROLE_AGENT", "", "A2A 1.0 JSONRPC echo: v1")
+		assertMultiProtocolMessage(t, message, "ROLE_AGENT", "", "A2A 1.0 JSONRPC echo: v1")
 	})
 
 	t.Run("JSON-RPC 0.3", func(t *testing.T) {
 		body := `{"jsonrpc":"2.0","id":"v03","method":"message/send","params":{"message":{"kind":"message","messageId":"request","role":"user","parts":[{"kind":"text","text":"v03"}]}}}`
-		response := servePythonA2ARequest(t, handler, "/a2a/legacy", body)
+		response := serveMultiProtocolRequest(t, handler, "/a2a/legacy", body)
 		message := response["result"].(map[string]any)
-		assertPythonA2AMessage(t, message, "agent", "text", "A2A 0.3 JSONRPC echo: v03")
+		assertMultiProtocolMessage(t, message, "agent", "text", "A2A 0.3 JSONRPC echo: v03")
 	})
 
 	t.Run("HTTP+JSON 1.0", func(t *testing.T) {
 		body := `{"message":{"messageId":"request","role":"ROLE_USER","parts":[{"text":"rest"}]}}`
-		response := servePythonA2ARequest(t, handler, "/rest/message:send", body)
+		response := serveMultiProtocolRequest(t, handler, "/rest/message:send", body)
 		message := response["message"].(map[string]any)
-		assertPythonA2AMessage(t, message, "ROLE_AGENT", "", "A2A 1.0 HTTP+JSON echo: rest")
+		assertMultiProtocolMessage(t, message, "ROLE_AGENT", "", "A2A 1.0 HTTP+JSON echo: rest")
 	})
 
 	t.Run("version method isolation", func(t *testing.T) {
@@ -112,7 +112,7 @@ func TestPythonA2AHandler(t *testing.T) {
 		for _, item := range cases {
 			body := `{"jsonrpc":"2.0","id":"wrong","method":"` + item.method +
 				`","params":{"message":{"parts":[{"text":"wrong"}]}}}`
-			response := servePythonA2ARequest(t, handler, item.path, body)
+			response := serveMultiProtocolRequest(t, handler, item.path, body)
 			errorBody, ok := response["error"].(map[string]any)
 			if !ok || errorBody["code"] != float64(-32601) {
 				t.Fatalf("%s accepted %s: %v", item.path, item.method, response)
@@ -121,7 +121,7 @@ func TestPythonA2AHandler(t *testing.T) {
 	})
 }
 
-func TestPythonA2ACardValidation(t *testing.T) {
+func TestMultiProtocolCardValidation(t *testing.T) {
 	for _, schema := range []string{"1.0", "0.3"} {
 		t.Run(schema, func(t *testing.T) {
 			version := "1.0.0"
@@ -134,7 +134,7 @@ func TestPythonA2ACardValidation(t *testing.T) {
 			cfg.AdvertisePort = 18080
 			cfg.A2APath = "/a2a/v1"
 			cfg.A2AVersion = schema
-			card, err := buildPythonA2ACard(cfg.ServiceName, version, cfg.AdvertiseHost, cfg.AdvertisePort, schema)
+			card, err := buildMultiProtocolCard(cfg.ServiceName, version, cfg.AdvertiseHost, cfg.AdvertisePort, schema)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestPythonA2ACardValidation(t *testing.T) {
 	}
 }
 
-func TestRewritePythonA2ACard(t *testing.T) {
+func TestRewriteMultiProtocolCard(t *testing.T) {
 	raw := `{
 		"name": "old-name",
 		"description": "keep this description",
@@ -164,7 +164,7 @@ func TestRewritePythonA2ACard(t *testing.T) {
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	card, err := rewritePythonA2ACard(
+	card, err := rewriteMultiProtocolCard(
 		path, "document-agent", "1.0.0", "127.0.0.1", 18080, "1.0",
 	)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestRewritePythonA2ACard(t *testing.T) {
 		t.Fatalf("preferred URL=%s", card.SupportedInterfaces[0].URL)
 	}
 
-	legacy, err := rewritePythonA2ACard(
+	legacy, err := rewriteMultiProtocolCard(
 		path, "document-agent", "0.9.0", "127.0.0.1", 18080, "0.3",
 	)
 	if err != nil {
@@ -199,7 +199,7 @@ func TestRewritePythonA2ACard(t *testing.T) {
 	}
 }
 
-func servePythonA2ARequest(t *testing.T, handler http.Handler, path, body string) map[string]any {
+func serveMultiProtocolRequest(t *testing.T, handler http.Handler, path, body string) map[string]any {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -215,7 +215,7 @@ func servePythonA2ARequest(t *testing.T, handler http.Handler, path, body string
 	return response
 }
 
-func assertPythonA2AMessage(
+func assertMultiProtocolMessage(
 	t *testing.T,
 	message map[string]any,
 	role, partKind, text string,

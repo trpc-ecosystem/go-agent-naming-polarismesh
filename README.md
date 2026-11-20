@@ -380,9 +380,9 @@ The A2A, MCP, and Skill examples require an OpenAI-compatible model endpoint.
 Every example requires a Polaris host at runtime.
 Each example has a `cleanup.sh` with `--dry-run`, `--force`, and
 `--delete-service` support.
-The `a2a-agentcard` provider defaults to the polaris-python 1.0/0.3
-multi-interface A2A scenario; explicit `-role agent-a|agent-b` selects the
-multi-version flow.
+The `a2a-agentcard` provider defaults to the Polaris AI Registry AgentCard
+1.0/0.3 multi-protocol enhancement; explicit `-role agent-a|agent-b` selects
+the multi-version flow.
 
 ## Full Integration Tests
 

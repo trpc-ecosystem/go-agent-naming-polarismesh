@@ -29,7 +29,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-naming-polarismesh/examples/internal/demo"
 )
 
-const pythonA2AContentType = "application/a2a+json"
+const multiProtocolContentType = "application/a2a+json"
 
 func runMultiInterfaceA2A(ctx context.Context) error {
 	sdk, err := demo.NewSDK(
@@ -99,11 +99,11 @@ func runMultiInterfaceA2A(ctx context.Context) error {
 		defer func() { _ = listener.Close() }()
 		actualPort := listener.Addr().(*net.TCPAddr).Port
 		if cardPath != "" {
-			card, err = rewritePythonA2ACard(
+			card, err = rewriteMultiProtocolCard(
 				cardPath, effectiveService, effectiveVersion, host, actualPort, a2aVersion,
 			)
 		} else {
-			card, err = buildPythonA2ACard(
+			card, err = buildMultiProtocolCard(
 				effectiveService, effectiveVersion, host, actualPort, a2aVersion,
 			)
 		}
@@ -128,7 +128,7 @@ func runMultiInterfaceA2A(ctx context.Context) error {
 			return fmt.Errorf("read frozen AgentCard JSON: %w", err)
 		}
 		httpSrv = &http.Server{
-			Handler:           newPythonA2AHandler(cardJSON),
+			Handler:           newMultiProtocolHandler(cardJSON),
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		serveDone = make(chan error, 1)
@@ -178,13 +178,13 @@ func runMultiInterfaceA2A(ctx context.Context) error {
 	return httpSrv.Shutdown(shutdown)
 }
 
-func buildPythonA2ACard(name, version, host string, port int, schema string) (a2aprotocolserver.AgentCard, error) {
+func buildMultiProtocolCard(name, version, host string, port int, schema string) (a2aprotocolserver.AgentCard, error) {
 	if net.ParseIP(strings.Trim(host, "[]")) == nil {
 		return a2aprotocolserver.AgentCard{}, fmt.Errorf("multi-interface A2A host %q must be an IP address", host)
 	}
 	base := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 	streaming := false
-	description := "Polaris Python A2A multi-interface compatibility provider"
+	description := "Polaris AI Registry AgentCard multi-protocol provider"
 	skillDescription := "Echo messages over A2A JSON-RPC 1.0, JSON-RPC 0.3 and HTTP+JSON 1.0"
 	card := a2aprotocolserver.AgentCard{
 		Name:        name,
@@ -230,7 +230,7 @@ func buildPythonA2ACard(name, version, host string, port int, schema string) (a2
 	return card, nil
 }
 
-func rewritePythonA2ACard(
+func rewriteMultiProtocolCard(
 	path, name, version, host string,
 	port int,
 	schema string,
@@ -280,22 +280,22 @@ func rewritePythonA2ACard(
 	return card, nil
 }
 
-type pythonA2AHandler struct {
+type multiProtocolHandler struct {
 	cardJSON string
 }
 
-func newPythonA2AHandler(cardJSON string) http.Handler {
-	return &pythonA2AHandler{cardJSON: cardJSON}
+func newMultiProtocolHandler(cardJSON string) http.Handler {
+	return &multiProtocolHandler{cardJSON: cardJSON}
 }
 
-func (h *pythonA2AHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+func (h *multiProtocolHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	switch request.URL.Path {
 	case "/.well-known/agent-card.json":
 		if request.Method != http.MethodGet {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		writer.Header().Set("Content-Type", pythonA2AContentType)
+		writer.Header().Set("Content-Type", multiProtocolContentType)
 		_, _ = writer.Write([]byte(h.cardJSON))
 	case "/a2a/v1":
 		h.handleJSONRPC(writer, request, "1.0")
@@ -308,18 +308,18 @@ func (h *pythonA2AHandler) ServeHTTP(writer http.ResponseWriter, request *http.R
 	}
 }
 
-type pythonA2AJSONRPCRequest struct {
+type multiProtocolJSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 }
 
-type pythonA2ASendParams struct {
+type multiProtocolSendParams struct {
 	Message map[string]any `json:"message"`
 }
 
-func (h *pythonA2AHandler) handleJSONRPC(
+func (h *multiProtocolHandler) handleJSONRPC(
 	writer http.ResponseWriter,
 	request *http.Request,
 	schema string,
@@ -328,9 +328,9 @@ func (h *pythonA2AHandler) handleJSONRPC(
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var payload pythonA2AJSONRPCRequest
+	var payload multiProtocolJSONRPCRequest
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-		writePythonA2AJSONRPCError(writer, nil, -32700, "Parse error", http.StatusBadRequest)
+		writeMultiProtocolJSONRPCError(writer, nil, -32700, "Parse error", http.StatusBadRequest)
 		return
 	}
 	expectedMethod := "SendMessage"
@@ -338,15 +338,15 @@ func (h *pythonA2AHandler) handleJSONRPC(
 		expectedMethod = "message/send"
 	}
 	if payload.JSONRPC != "2.0" || payload.Method != expectedMethod {
-		writePythonA2AJSONRPCError(writer, payload.ID, -32601, "Method not found", http.StatusOK)
+		writeMultiProtocolJSONRPCError(writer, payload.ID, -32601, "Method not found", http.StatusOK)
 		return
 	}
-	var params pythonA2ASendParams
+	var params multiProtocolSendParams
 	if err := json.Unmarshal(payload.Params, &params); err != nil || params.Message == nil {
-		writePythonA2AJSONRPCError(writer, payload.ID, -32602, "Missing message parameter", http.StatusOK)
+		writeMultiProtocolJSONRPCError(writer, payload.ID, -32602, "Missing message parameter", http.StatusOK)
 		return
 	}
-	message := pythonA2AMessage(params.Message, schema, "JSONRPC")
+	message := multiProtocolMessage(params.Message, schema, "JSONRPC")
 	result := any(message)
 	if schema != "0.3" {
 		result = map[string]any{"message": message}
@@ -355,21 +355,21 @@ func (h *pythonA2AHandler) handleJSONRPC(
 	if len(payload.ID) > 0 {
 		id = payload.ID
 	}
-	writePythonA2AJSON(writer, http.StatusOK, map[string]any{
+	writeMultiProtocolJSON(writer, http.StatusOK, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"result":  result,
 	})
 }
 
-func (h *pythonA2AHandler) handleREST(writer http.ResponseWriter, request *http.Request) {
+func (h *multiProtocolHandler) handleREST(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	var payload map[string]any
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-		writePythonA2AJSON(writer, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		writeMultiProtocolJSON(writer, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
 		return
 	}
 	message, ok := payload["message"].(map[string]any)
@@ -377,18 +377,18 @@ func (h *pythonA2AHandler) handleREST(writer http.ResponseWriter, request *http.
 		message = payload
 	}
 	if message == nil {
-		writePythonA2AJSON(writer, http.StatusBadRequest, map[string]any{"error": "message must be an object"})
+		writeMultiProtocolJSON(writer, http.StatusBadRequest, map[string]any{"error": "message must be an object"})
 		return
 	}
-	writePythonA2AJSON(writer, http.StatusOK, map[string]any{
-		"message": pythonA2AMessage(message, "1.0", "HTTP+JSON"),
+	writeMultiProtocolJSON(writer, http.StatusOK, map[string]any{
+		"message": multiProtocolMessage(message, "1.0", "HTTP+JSON"),
 	})
 }
 
-func pythonA2AMessage(message map[string]any, schema, transport string) map[string]any {
-	text := pythonA2AMessageText(message)
-	contextID := pythonA2AStringField(message, "contextId", "context_id")
-	taskID := pythonA2AStringField(message, "taskId", "task_id")
+func multiProtocolMessage(message map[string]any, schema, transport string) map[string]any {
+	text := multiProtocolMessageText(message)
+	contextID := multiProtocolStringField(message, "contextId", "context_id")
+	taskID := multiProtocolStringField(message, "taskId", "task_id")
 	if schema == "0.3" {
 		result := map[string]any{
 			"kind":      "message",
@@ -419,7 +419,7 @@ func pythonA2AMessage(message map[string]any, schema, transport string) map[stri
 	return result
 }
 
-func pythonA2AMessageText(message map[string]any) string {
+func multiProtocolMessageText(message map[string]any) string {
 	parts, _ := message["parts"].([]any)
 	for _, raw := range parts {
 		part, _ := raw.(map[string]any)
@@ -433,7 +433,7 @@ func pythonA2AMessageText(message map[string]any) string {
 	return ""
 }
 
-func pythonA2AStringField(message map[string]any, keys ...string) string {
+func multiProtocolStringField(message map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := message[key].(string); ok && value != "" {
 			return value
@@ -442,7 +442,7 @@ func pythonA2AStringField(message map[string]any, keys ...string) string {
 	return ""
 }
 
-func writePythonA2AJSONRPCError(
+func writeMultiProtocolJSONRPCError(
 	writer http.ResponseWriter,
 	id json.RawMessage,
 	code int,
@@ -453,7 +453,7 @@ func writePythonA2AJSONRPCError(
 	if len(id) > 0 {
 		value = id
 	}
-	writePythonA2AJSON(writer, status, map[string]any{
+	writeMultiProtocolJSON(writer, status, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      value,
 		"error": map[string]any{
@@ -463,8 +463,8 @@ func writePythonA2AJSONRPCError(
 	})
 }
 
-func writePythonA2AJSON(writer http.ResponseWriter, status int, payload any) {
-	writer.Header().Set("Content-Type", pythonA2AContentType)
+func writeMultiProtocolJSON(writer http.ResponseWriter, status int, payload any) {
+	writer.Header().Set("Content-Type", multiProtocolContentType)
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(payload)
 }

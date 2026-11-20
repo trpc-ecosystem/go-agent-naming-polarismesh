@@ -11,7 +11,7 @@ the examples. The tests are guarded by the `integration` build tag, so normal
 | [a2a](./a2a) | Polaris, loopback A2A | AgentCard metadata, discovery, unary call, streaming, cancellation |
 | [mcp](./mcp) | Polaris, loopback MCP | MCP metadata, Service Contract, discovery, Pool tool call |
 | [skill](./skill) | Polaris Skill data plane, loopback A2A | Publish, install, repository assembly, `skill_load` model injection |
-| [a2a-agentcard](./a2a-agentcard) | Polaris, loopback A2A | Registered Agent A calls two versioned Agent B instances; the provider's default mode validates the polaris-python 1.0/0.3 multi-interface scenario |
+| [a2a-agentcard](./a2a-agentcard) | Polaris, loopback A2A | Registered Agent A calls two versioned Agent B instances; the provider's default mode validates the Polaris AI Registry AgentCard 1.0/0.3 multi-protocol enhancement |
 
 ## Case Documentation
 
@@ -128,7 +128,7 @@ remaining `gan-e2e-<run-id>-*` resources:
 ```
 
 The run-ID form removes the A2A service, MCP service and its Service Contract,
-Skill Agent service, A2A AgentCard services, Python-compatibility services,
+Skill Agent service, A2A AgentCard services, AgentCard multi-protocol services,
 and published Skill. Explicit `--service` and `--skill` arguments can be added
 for a custom run.
 

@@ -11,12 +11,12 @@ Integration 套件会把示例二进制构建到 `t.TempDir()`，再以子进程
 | 测试 | 拉起的子进程 | 注册的服务 |
 | --- | --- | --- |
 | `TestA2AAgentCardExampleAcrossProcesses` | 3 个 Provider：Agent B v1、Agent B v2、Agent A；1 个 Client | `gan-e2e-<run-id>-agent-a`、`gan-e2e-<run-id>-agent-b` |
-| `TestPythonA2ACompatibilityProvider/schema-10` | 1 个 Provider | `gan-e2e-<run-id>-python-a2a-10` |
-| `TestPythonA2ACompatibilityProvider/schema-03` | 1 个 Provider | `gan-e2e-<run-id>-python-a2a-03` |
-| `TestPythonA2ACompatibilityProvider/no-serve` | 1 个 Provider，不启动业务 listener | `gan-e2e-<run-id>-python-a2a-noserve` |
+| `TestAgentCardMultiProtocolProvider/schema-10` | 1 个 Provider | `gan-e2e-<run-id>-agentcard-10` |
+| `TestAgentCardMultiProtocolProvider/schema-03` | 1 个 Provider | `gan-e2e-<run-id>-agentcard-03` |
+| `TestAgentCardMultiProtocolProvider/no-serve` | 1 个 Provider，不启动业务 listener | `gan-e2e-<run-id>-agentcard-noserve` |
 
 Agent A 和 Agent B v1 使用 registration port `1`，Agent B v2 使用
-registration port `2`；Python 兼容场景使用 registration port `1`。A2A
+registration port `2`；AgentCard 多协议场景使用 registration port `1`。A2A
 业务端口均动态分配。
 
 ## Integration 调用关系
@@ -34,7 +34,7 @@ Agent A/B：
 测试进程 ─► ConsumerAPI ─► 等待健康实例并校验 metadata
 ```
 
-Python 兼容场景：
+AgentCard 多协议场景：
 
 ```text
 测试进程 ─► Provider 子进程 ─► /.well-known/agent-card.json
@@ -88,21 +88,21 @@ port `2`，确保两个 localhost 实例保持独立；A2A endpoint 仍分别在
 `b=v1.0.0:agent-b|v1.0.0|` 与 `b=v2.0.0:agent-b|v2.0.0|` 两段结果，
 Client 输出 `success: true`。
 
-## 默认 Polaris Python A2A 兼容用例
+## 默认 AgentCard 多协议增强用例
 
-不传 `-role` 时，Provider 默认支持 `polaris-python/examples/a2a/README-zh.md`
-描述的场景，真实验证位于
+不传 `-role` 时，Provider 默认启用北极星 AI 注册中心的 AgentCard
+多协议增强能力，真实验证位于
 [e2e_test.go](e2e_test.go)。
 
 ### [用例 2.1 多接口 1.0 卡片]
 
-操作：不传 `-role`，使用 `-a2a-version 1.0` 启动 Provider，可选传入与
-Python 验证器一致的 `-card` 文件。
+操作：不传 `-role`，使用 `-a2a-version 1.0` 启动 Provider，可选传入
+`-card` 文件。
 
 预期：一张 AgentCard 在同一 IP/业务端口上包含 `/a2a/v1` JSON-RPC 1.0、
 `/a2a/legacy` JSON-RPC 0.3 和 `/rest` HTTP+JSON 1.0。实例包含三个
 AgentCard metadata 键、registration port `1`、空 protocol 和卡片 version；
-card endpoint 返回相同 JSON；三个调用返回 Python 兼容的 Message 和
+card endpoint 返回相同 JSON；三个调用返回统一的 Message 和
 `SendMessageResponse` 结构。
 
 ### [用例 2.2 多接口 0.3 卡片]
