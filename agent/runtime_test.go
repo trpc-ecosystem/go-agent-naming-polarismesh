@@ -106,6 +106,40 @@ func TestRuntimeRegistrationSnapshotAndHotCardUpdate(t *testing.T) {
 	)
 }
 
+func TestRuntimeUpdatedCardOwnsNestedFields(t *testing.T) {
+	config := testutil.ProviderConfig()
+	registrar := namingtest.NewFakeMetadataRegistrar()
+	runtime, err := New(
+		WithConfig(config),
+		WithSDKContext(&testutil.FakeSDKContext{}),
+		WithMetadataRegistrar(registrar),
+	)
+	require.NoError(t, err)
+	require.NoError(t, runtime.Prepare(context.Background()))
+
+	card, err := runtime.AgentCard()
+	require.NoError(t, err)
+	require.NotEmpty(t, card.SupportedInterfaces)
+	card.Description = "updated card owned by runtime"
+	require.NoError(t, runtime.UpdateAgentCard(context.Background(), card))
+
+	updatedJSON, _, err := runtime.AgentCardJSON()
+	require.NoError(t, err)
+	updatedMetadata, err := runtime.InstanceMetadata()
+	require.NoError(t, err)
+	card.SupportedInterfaces[0].URL = "http://127.0.0.2:18080/a2a"
+
+	updated, err := runtime.AgentCard()
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:18080/a2a", updated.SupportedInterfaces[0].URL)
+	afterMutationJSON, _, err := runtime.AgentCardJSON()
+	require.NoError(t, err)
+	require.Equal(t, updatedJSON, afterMutationJSON)
+	afterMutationMetadata, err := runtime.InstanceMetadata()
+	require.NoError(t, err)
+	require.Equal(t, updatedMetadata, afterMutationMetadata)
+}
+
 func TestRuntimeRegistryAndDiscoveryDisable(t *testing.T) {
 	providerConfig := testutil.ProviderConfig()
 	providerConfig.RegistryEnabled = false

@@ -662,6 +662,10 @@ func (r *Resolver) currentResolvedForBuild(
 		callerKey = "default"
 	}
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil, ErrClosed
+	}
 	bindingState := r.bindingStateLocked(protocolBinding)
 	resolved, retry, err := r.recoverCurrentResolveLocked(bindingState, callerKey, protocolBinding)
 	r.mu.Unlock()

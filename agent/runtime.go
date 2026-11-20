@@ -416,6 +416,10 @@ func (r *Runtime) UpdateAgentCard(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	card, err := adapteragentcard.CloneAgentCard(card)
+	if err != nil {
+		return adaptererrors.WrapError("copy AgentCard", err)
+	}
 	version := adapteragentcard.SchemaVersion(r.config.A2AVersion)
 	if err := adapteragentcard.ValidateAgentCard(r.config, &card, version); err != nil {
 		return err

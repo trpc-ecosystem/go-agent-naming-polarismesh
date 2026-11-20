@@ -451,6 +451,27 @@ func TestResolverRemoteAgentRejectsCloseDuringFactory(t *testing.T) {
 	require.ErrorIs(t, err, ErrClosed)
 }
 
+func TestResolverClosedBuildReturnsErrorAfterAdmission(t *testing.T) {
+	instance := testutil.InstanceWithMetadata("instance", "127.0.0.1", 18080, true, false,
+		agentcardtest.CardMetadata(t, "127.0.0.1", 18080))
+	resolver, err := newTestResolver(&testutil.FakeInstanceLister{
+		Responses: []*model.InstancesResponse{testutil.InstancesResponse(instance)},
+	})
+	require.NoError(t, err)
+	remote := &dynamicRemoteAgent{
+		resolver:        resolver,
+		callerKey:       "caller",
+		protocolBinding: "JSONRPC",
+		build:           make(chan struct{}, 1),
+	}
+	remote.build <- struct{}{}
+
+	require.NoError(t, resolver.Close())
+	_, err = resolver.currentResolvedForBuild(context.Background(), "caller", "JSONRPC")
+	require.ErrorIs(t, err, ErrClosed)
+	<-remote.build
+}
+
 func TestResolverRemoteAgentBuildWaitRespectsDeadline(t *testing.T) {
 	first := testutil.InstanceWithMetadata("first", "127.0.0.1", 18080, true, false,
 		agentcardtest.CardMetadata(t, "127.0.0.1", 18080))
