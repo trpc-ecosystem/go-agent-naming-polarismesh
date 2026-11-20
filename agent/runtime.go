@@ -800,6 +800,8 @@ func (r *Runtime) ensureSDKContext() (api.SDKContext, error) {
 	}
 	if cfg.PolarisRequestTimeout > 0 {
 		polarisConfig.GetGlobal().GetAPI().SetTimeout(cfg.PolarisRequestTimeout)
+		polarisConfig.GetSkill().SetMessageTimeout(cfg.PolarisRequestTimeout)
+		polarisConfig.GetSkill().SetDownloadTimeout(cfg.PolarisRequestTimeout)
 	}
 	created, err := api.InitContextByConfig(polarisConfig)
 	if err != nil {

@@ -169,7 +169,8 @@ Resolver 会过滤不健康和被隔离的实例，按 `ai-a2a-version` 分别�
 AgentCard，校验 interface host 与实例 IP 一致，并按调用方 key 保持粘性。
 调用方传入的 `protocolBinding` 用于选择卡片 interface，不再用实例 port 拼接
 业务地址。只有北极星发现失败时才回退到最近一次成功解析的 AgentCard，回退结果
-同样会绑定到本次请求的 interface。坏实例和卡片回退都会记录 tRPC metrics 与日志。
+同样会绑定到本次请求的 interface。Resolver 的回退、粘性 caller 和候选实例状态
+按协议 binding 隔离。坏实例和卡片回退都会记录 tRPC metrics 与日志。
 已经向调用方输出流式事件后，适配层不会静默切换实例重试。
 实例发现及服务 Skill 读取显式关闭借用 SDK 的重试，并传入单次剩余预算。
 同步 SDK 操作仍不能强制中断，调用前后都会检查取消状态。
@@ -231,6 +232,8 @@ config.MountSkills = true
 排序。安装结果必须位于缓存目录内且包含 `SKILL.md`，随后才会构建
 `skill.Repository`。Repository 只包含本次安装选中的 Skill，不会加载缓存目录中的
 历史版本或未选择资产。
+published Skill 查询和安装会遵守剩余加载或刷新 deadline；由 Runtime 创建的
+SDK Context 也会将 Skill message/download 超时对齐到 `PolarisRequestTimeout`。
 
 `SkillListRefresh` 可周期刷新 published/mounted Repository，刷新成功后原子替换
 完整快照，失败则保留上一份。`SkillFailureThreshold`、`SkillListLimit`、

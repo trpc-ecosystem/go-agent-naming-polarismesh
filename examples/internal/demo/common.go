@@ -99,6 +99,7 @@ func NewSDK(discover, skillAddress string, enableSkills bool, timeout time.Durat
 		cfg.GetSkill().SetAddresses([]string{skillAddress})
 		cfg.GetSkill().SetConnectTimeout(timeout)
 		cfg.GetSkill().SetMessageTimeout(timeout)
+		cfg.GetSkill().SetDownloadTimeout(timeout)
 		if token := firstEnvironment("POLARIS_SKILL_TOKEN", "POLARIS_TOKEN"); token != "" {
 			cfg.GetSkill().SetToken(token)
 		}

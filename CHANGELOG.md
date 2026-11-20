@@ -58,6 +58,11 @@ All notable changes to this project will be documented in this file.
 - Preserve complete discovered AgentCards and default streaming behavior, reject
   malformed interface versions without panic, advance Skill pagination by raw
   windows, and start/drain Skill refreshes within Runtime lifecycle ownership.
+- Isolate Resolver fallback, sticky-caller, and candidate state by protocol
+  binding so one binding's failure cannot evict another binding's cache.
+- Bound published Skill list and install operations by the remaining load
+  deadline, and align owned SDK Skill message/download timeouts with the
+  configured Polaris request timeout.
 - Preserve legacy mounted-plus-explicit Skill merging and make empty or
   overlapping Skill refreshes converge deterministically.
 - Preserve MCP notification names longer than the Polaris 32-character

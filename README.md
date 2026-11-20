@@ -186,8 +186,9 @@ The requested `protocolBinding` selects an interface from the card; the
 instance port is not used to build the business request URL. The most recent
 successfully resolved card is used only when Polaris discovery fails, and the
 fallback is rebound to the requested interface. Invalid cards and host
-mismatches are skipped before selection. The adapter does not silently retry a
-streaming call after an event has been delivered. Invalid instances and
+mismatches are skipped before selection. Resolver fallback, sticky-caller, and
+candidate state is isolated by protocol binding. The adapter does not silently
+retry a streaming call after an event has been delivered. Invalid instances and
 discovery fallback are reported through tRPC metrics and logs.
 
 Custom A2A options are supplied by a `naming.RemoteAgentOptionsFactory`. Each
@@ -249,6 +250,9 @@ config.MountSkills = true
 The Runtime installs every selected Skill through the Polaris `SkillAPI`,
 verifies that each result stays inside the cache root and contains `SKILL.md`,
 then creates a `skill.Repository`.
+Published Skill list and install calls honor the remaining load or refresh
+deadline; an SDK context created by the Runtime also aligns Skill message and
+download timeouts with `PolarisRequestTimeout`.
 
 Published and mounted repositories can refresh atomically through
 `SkillListRefresh`. A failed refresh keeps the previous complete repository.

@@ -84,6 +84,126 @@ func TestSkillRepositoryUsesRequestedVersionOnly(t *testing.T) {
 	require.Equal(t, expected, actual)
 }
 
+type blockingSkillListAPI struct {
+	api.SkillAPI
+	started chan struct{}
+	release chan struct{}
+	done    chan struct{}
+}
+
+func newBlockingSkillListAPI() *blockingSkillListAPI {
+	return &blockingSkillListAPI{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+}
+
+func (a *blockingSkillListAPI) GetSkillListResult(
+	*api.GetSkillListRequest,
+) (*api.SkillListResult, error) {
+	defer close(a.done)
+	close(a.started)
+	<-a.release
+	return &api.SkillListResult{}, nil
+}
+
+func TestPublishedLoadHonorsDeadline(t *testing.T) {
+	skillAPI := newBlockingSkillListAPI()
+	loader := NewLoader(nil, skillAPI)
+	cacheDir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	loadDone := make(chan error, 1)
+	go func() {
+		_, err := loader.Load(ctx, Options{
+			Namespace:      "Production",
+			Service:        "customer-agent",
+			CacheDir:       cacheDir,
+			RequestTimeout: time.Minute,
+			Mode:           config.SkillModePublished,
+		})
+		loadDone <- err
+	}()
+
+	select {
+	case <-skillAPI.started:
+	case err := <-loadDone:
+		t.Fatalf("Load returned before the Skill list call started: %v", err)
+	}
+	select {
+	case <-skillAPI.release:
+		t.Fatal("Skill list call was released before the loader deadline")
+	default:
+	}
+	err := <-loadDone
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	close(skillAPI.release)
+	<-skillAPI.done
+}
+
+type blockingSkillInstallAPI struct {
+	api.SkillAPI
+	started chan struct{}
+	release chan struct{}
+	done    chan struct{}
+}
+
+func newBlockingSkillInstallAPI() *blockingSkillInstallAPI {
+	return &blockingSkillInstallAPI{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+}
+
+func (a *blockingSkillInstallAPI) Install(
+	*api.SkillInstallRequest,
+) (*model.InstalledSkill, error) {
+	defer close(a.done)
+	close(a.started)
+	<-a.release
+	return nil, nil
+}
+
+func TestSkillInstallHonorsDeadline(t *testing.T) {
+	skillAPI := newBlockingSkillInstallAPI()
+	loader := NewLoader(nil, skillAPI)
+	cacheDir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	loadDone := make(chan error, 1)
+	go func() {
+		_, err := loader.Load(ctx, Options{
+			Namespace: "Production",
+			Service:   "customer-agent",
+			CacheDir:  cacheDir,
+			ExplicitRefs: []config.SkillRef{{
+				Namespace: "Production", Name: "weather", Version: "1.0.0",
+			}},
+			RequestTimeout: time.Minute,
+		})
+		loadDone <- err
+	}()
+
+	select {
+	case <-skillAPI.started:
+	case err := <-loadDone:
+		t.Fatalf("Load returned before the Skill install call started: %v", err)
+	}
+	select {
+	case <-skillAPI.release:
+		t.Fatal("Skill install call was released before the loader deadline")
+	default:
+	}
+	err := <-loadDone
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	close(skillAPI.release)
+	<-skillAPI.done
+}
+
 func TestSkillRepositoryExcludesUnselectedCacheEntries(t *testing.T) {
 	root := t.TempDir()
 	installer := &testutil.FakeSkillAPI{}

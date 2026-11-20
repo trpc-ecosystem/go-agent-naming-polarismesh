@@ -54,6 +54,10 @@
   POST SSE 及旧版 SSE；使用 MCP v0.0.17 修正 stdio 进程关闭竞争。
 - 发现结果保留完整 AgentCard 和默认流式行为，非法接口版本不再触发 panic；
   Skill 分页按原始窗口推进，刷新器的启动、关闭和任务排空由 Runtime 统一管理。
+- Resolver 的回退、粘性 caller 和候选实例状态按协议 binding 隔离，避免一个
+  binding 的失败清除另一个 binding 的缓存。
+- published Skill 查询和安装受剩余加载 deadline 限制，自有 SDK 的 Skill
+  message/download 超时与配置的 Polaris 请求超时保持一致。
 - 保留旧的 mounted 与显式 Skill 合并行为，并让空或重叠的 Skill 刷新
   以确定的方式收敛。
 - MCP 通知名称超过 Polaris 32 字符 InterfaceDescriptor 方法名限制时，

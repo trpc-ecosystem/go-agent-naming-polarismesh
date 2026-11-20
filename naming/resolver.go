@@ -75,15 +75,10 @@ type Resolver struct {
 	mu       sync.RWMutex
 	closed   bool
 	closedCh chan struct{}
-	callers  map[string]resolverCaller
-	agents   map[string]ResolvedAgent
 	now      func() time.Time
 
-	resolveSequence        uint64
-	lastCommittedIteration uint64
-	lastCommittedError     error
-	latestCandidates       []*ResolvedAgent
-	latestSeen             time.Time
+	resolveSequence uint64
+	bindingStates   map[string]*resolverBindingState
 }
 
 // ResolverOptions configures a Resolver.
@@ -101,6 +96,15 @@ type resolverCaller struct {
 	lastUsed   time.Time
 }
 
+type resolverBindingState struct {
+	callers                map[string]resolverCaller
+	agents                 map[string]ResolvedAgent
+	lastCommittedIteration uint64
+	lastCommittedError     error
+	latestCandidates       []*ResolvedAgent
+	latestSeen             time.Time
+}
+
 // NewResolver creates a Polaris A2A instance resolver.
 func NewResolver(options ResolverOptions) *Resolver {
 	if options.Timeout <= 0 {
@@ -112,11 +116,31 @@ func NewResolver(options ResolverOptions) *Resolver {
 		timeout:         options.Timeout,
 		lister:          options.Lister,
 		protocolBinding: options.ProtocolBinding,
-		callers:         make(map[string]resolverCaller),
-		agents:          make(map[string]ResolvedAgent),
+		bindingStates:   make(map[string]*resolverBindingState),
 		now:             time.Now,
 		closedCh:        make(chan struct{}),
 	}
+}
+
+func (r *Resolver) bindingStateReadOnlyLocked(protocolBinding string) *resolverBindingState {
+	return r.bindingStates[resolverBindingKey(protocolBinding)]
+}
+
+func (r *Resolver) bindingStateLocked(protocolBinding string) *resolverBindingState {
+	key := resolverBindingKey(protocolBinding)
+	state := r.bindingStates[key]
+	if state == nil {
+		state = &resolverBindingState{
+			callers: make(map[string]resolverCaller),
+			agents:  make(map[string]ResolvedAgent),
+		}
+		r.bindingStates[key] = state
+	}
+	return state
+}
+
+func resolverBindingKey(protocolBinding string) string {
+	return strings.ToLower(strings.TrimSpace(protocolBinding))
 }
 
 // Resolve returns the sticky healthy instance for callerKey.
@@ -170,8 +194,10 @@ func (r *Resolver) resolveOnce(
 		return nil, false, errors.New("polaris instance lister is required")
 	}
 	var stickyID string
-	if state, ok := r.callers[callerKey]; ok {
-		stickyID = state.instanceID
+	if state := r.bindingStateReadOnlyLocked(protocolBinding); state != nil {
+		if caller, ok := state.callers[callerKey]; ok {
+			stickyID = caller.instanceID
+		}
 	}
 	r.mu.RUnlock()
 	r.mu.Lock()
@@ -181,6 +207,7 @@ func (r *Resolver) resolveOnce(
 	}
 	r.resolveSequence++
 	sequence := r.resolveSequence
+	bindingState := r.bindingStateLocked(protocolBinding)
 	r.mu.Unlock()
 
 	timeout := r.timeout
@@ -253,18 +280,18 @@ func (r *Resolver) resolveOnce(
 		r.mu.Unlock()
 		return nil, false, ErrClosed
 	}
-	if r.isStaleResolveLocked(sequence) {
-		resolved, retry, err := r.recoverCurrentResolveLocked(callerKey, protocolBinding)
+	if r.isStaleResolveLocked(sequence, bindingState) {
+		resolved, retry, err := r.recoverCurrentResolveLocked(bindingState, callerKey, protocolBinding)
 		r.mu.Unlock()
 		return resolved, retry, err
 	}
-	if err := r.commitSuccessfulResolveLocked(sequence, callerKey, selected); err != nil {
+	if err := r.commitSuccessfulResolveLocked(sequence, bindingState, callerKey, selected); err != nil {
 		r.mu.Unlock()
 		return nil, false, err
 	}
-	r.latestCandidates = candidates
-	r.latestSeen = r.now()
-	r.pruneUnavailableAgentsLocked(candidates)
+	bindingState.latestCandidates = candidates
+	bindingState.latestSeen = r.now()
+	r.pruneUnavailableAgentsLocked(bindingState, candidates)
 	result, err := cloneResolvedAgent(*selected)
 	r.mu.Unlock()
 	if err != nil {
@@ -342,9 +369,12 @@ func (r *Resolver) Close() error {
 	}
 	r.closed = true
 	close(r.closedCh)
-	r.callers = nil
-	r.agents = nil
-	r.latestCandidates = nil
+	for _, state := range r.bindingStates {
+		state.callers = nil
+		state.agents = nil
+		state.latestCandidates = nil
+	}
+	r.bindingStates = nil
 	return nil
 }
 
@@ -358,10 +388,12 @@ func (r *Resolver) Forget(callerKey string) {
 	if r.closed {
 		return
 	}
-	state, ok := r.callers[callerKey]
-	delete(r.callers, callerKey)
-	if ok && !r.agentHasOtherCallerLocked(state.instanceID) {
-		delete(r.agents, state.instanceID)
+	for _, state := range r.bindingStates {
+		caller, ok := state.callers[callerKey]
+		delete(state.callers, callerKey)
+		if ok && !state.agentHasOtherCallerLocked(caller.instanceID) {
+			delete(state.agents, caller.instanceID)
+		}
 	}
 }
 
@@ -630,7 +662,8 @@ func (r *Resolver) currentResolvedForBuild(
 		callerKey = "default"
 	}
 	r.mu.Lock()
-	resolved, retry, err := r.recoverCurrentResolveLocked(callerKey, protocolBinding)
+	bindingState := r.bindingStateLocked(protocolBinding)
+	resolved, retry, err := r.recoverCurrentResolveLocked(bindingState, callerKey, protocolBinding)
 	r.mu.Unlock()
 	if retry {
 		return r.ResolveWithBinding(ctx, callerKey, protocolBinding)
@@ -650,21 +683,25 @@ func (r *Resolver) resolvedKeyIsCurrentLocked(
 	if r.closed {
 		return false, ErrClosed
 	}
-	if r.lastCommittedError != nil {
-		return false, r.lastCommittedError
-	}
 	if callerKey == "" {
 		callerKey = "default"
 	}
-	state, ok := r.callers[callerKey]
+	state := r.bindingStateReadOnlyLocked(protocolBinding)
+	if state == nil {
+		return false, nil
+	}
+	if state.lastCommittedError != nil {
+		return false, state.lastCommittedError
+	}
+	caller, ok := state.callers[callerKey]
 	if !ok {
 		return false, nil
 	}
-	if r.now().Sub(state.lastSeen) > resolverFallbackTTL {
+	if r.now().Sub(caller.lastSeen) > resolverFallbackTTL {
 		return false, fmt.Errorf("%w: cached AgentCard expired during client build", ErrNoAvailableInstance)
 	}
-	for _, candidate := range r.latestCandidates {
-		if candidate.InstanceID == state.instanceID {
+	for _, candidate := range state.latestCandidates {
+		if candidate.InstanceID == caller.instanceID {
 			bound, err := bindResolvedAgent(*candidate, protocolBinding)
 			if err != nil {
 				return false, nil
@@ -767,39 +804,41 @@ func (r *Resolver) resolveFallback(
 		r.mu.Unlock()
 		return nil, ErrClosed
 	}
+	bindingState := r.bindingStateLocked(protocolBinding)
 	if !canFallbackDiscoveryError(cause) {
-		if !r.isStaleResolveLocked(sequence) {
-			r.lastCommittedIteration = sequence
-			r.lastCommittedError = cause
-			r.latestCandidates = nil
-			r.pruneUnavailableAgentsLocked(nil)
+		if !r.isStaleResolveLocked(sequence, bindingState) {
+			bindingState.lastCommittedIteration = sequence
+			bindingState.lastCommittedError = cause
+			bindingState.latestCandidates = nil
+			r.pruneUnavailableAgentsLocked(bindingState, nil)
 		}
 		r.mu.Unlock()
 		return nil, cause
 	}
-	if r.lastCommittedError != nil {
-		err := fmt.Errorf("%w: discover A2A instances: %w: %w", ErrNoAvailableInstance, cause, r.lastCommittedError)
+	if bindingState.lastCommittedError != nil {
+		err := fmt.Errorf("%w: discover A2A instances: %w: %w",
+			ErrNoAvailableInstance, cause, bindingState.lastCommittedError)
 		r.mu.Unlock()
 		return nil, err
 	}
-	state, ok := r.callers[callerKey]
-	expired := ok && r.now().Sub(state.lastSeen) > resolverFallbackTTL
+	caller, ok := bindingState.callers[callerKey]
+	expired := ok && r.now().Sub(caller.lastSeen) > resolverFallbackTTL
 	if !ok {
 		r.mu.Unlock()
 		return nil, fmt.Errorf("%w: discover A2A instances: %w", ErrNoAvailableInstance, cause)
 	}
 	if expired {
-		delete(r.callers, callerKey)
-		if !r.agentHasOtherCallerLocked(state.instanceID) {
-			delete(r.agents, state.instanceID)
+		delete(bindingState.callers, callerKey)
+		if !bindingState.agentHasOtherCallerLocked(caller.instanceID) {
+			delete(bindingState.agents, caller.instanceID)
 		}
 		r.mu.Unlock()
 		return nil, fmt.Errorf("%w: cached AgentCard expired: %w", ErrNoAvailableInstance, cause)
 	}
-	fallback, hasFallback := r.agents[state.instanceID]
+	fallback, hasFallback := bindingState.agents[caller.instanceID]
 	if hasFallback {
-		state.lastUsed = r.now()
-		r.callers[callerKey] = state
+		caller.lastUsed = r.now()
+		bindingState.callers[callerKey] = caller
 	}
 	r.mu.Unlock()
 	if !hasFallback {
@@ -838,27 +877,28 @@ func canFallbackDiscoveryError(cause error) bool {
 }
 
 func (r *Resolver) recoverCurrentResolveLocked(
+	state *resolverBindingState,
 	callerKey string,
 	protocolBinding string,
 ) (*ResolvedAgent, bool, error) {
 	if r.closed {
 		return nil, false, ErrClosed
 	}
-	if r.lastCommittedError != nil {
-		return nil, false, r.lastCommittedError
+	if state.lastCommittedError != nil {
+		return nil, false, state.lastCommittedError
 	}
-	if len(r.latestCandidates) == 0 || r.now().Sub(r.latestSeen) > resolverFallbackTTL {
+	if len(state.latestCandidates) == 0 || r.now().Sub(state.latestSeen) > resolverFallbackTTL {
 		return nil, true, nil
 	}
-	selected := r.latestCandidates[stableIndex(callerKey, len(r.latestCandidates))]
+	selected := state.latestCandidates[stableIndex(callerKey, len(state.latestCandidates))]
 	bound, err := bindResolvedAgent(*selected, protocolBinding)
 	if err != nil {
 		return nil, true, nil
 	}
 	selected = &bound
-	if state, ok := r.callers[callerKey]; ok {
-		for _, candidate := range r.latestCandidates {
-			if candidate.InstanceID == state.instanceID {
+	if caller, ok := state.callers[callerKey]; ok {
+		for _, candidate := range state.latestCandidates {
+			if candidate.InstanceID == caller.instanceID {
 				bound, bindErr := bindResolvedAgent(*candidate, protocolBinding)
 				if bindErr != nil {
 					return nil, true, nil
@@ -873,18 +913,18 @@ func (r *Resolver) recoverCurrentResolveLocked(
 		return nil, false, err
 	}
 	now := r.now()
-	r.evictCallerLocked(callerKey, now)
-	r.callers[callerKey] = resolverCaller{
+	r.evictCallerLocked(state, callerKey, now)
+	state.callers[callerKey] = resolverCaller{
 		instanceID: selected.InstanceID,
-		lastSeen:   r.latestSeen,
+		lastSeen:   state.latestSeen,
 		lastUsed:   now,
 	}
-	r.agents[selected.InstanceID] = *selected
+	state.agents[selected.InstanceID] = *selected
 	return &copied, false, nil
 }
 
-func (r *Resolver) isStaleResolveLocked(sequence uint64) bool {
-	return sequence <= r.lastCommittedIteration
+func (r *Resolver) isStaleResolveLocked(sequence uint64, state *resolverBindingState) bool {
+	return sequence <= state.lastCommittedIteration
 }
 
 func (r *Resolver) commitInvalidResolve(
@@ -898,18 +938,20 @@ func (r *Resolver) commitInvalidResolve(
 	if r.closed {
 		return nil, false, ErrClosed
 	}
-	if r.isStaleResolveLocked(sequence) {
-		return r.recoverCurrentResolveLocked(callerKey, protocolBinding)
+	bindingState := r.bindingStateLocked(protocolBinding)
+	if r.isStaleResolveLocked(sequence, bindingState) {
+		return r.recoverCurrentResolveLocked(bindingState, callerKey, protocolBinding)
 	}
-	r.lastCommittedIteration = sequence
-	r.lastCommittedError = cause
-	r.latestCandidates = nil
-	r.pruneUnavailableAgentsLocked(nil)
+	bindingState.lastCommittedIteration = sequence
+	bindingState.lastCommittedError = cause
+	bindingState.latestCandidates = nil
+	r.pruneUnavailableAgentsLocked(bindingState, nil)
 	return nil, false, cause
 }
 
 func (r *Resolver) commitSuccessfulResolveLocked(
 	sequence uint64,
+	state *resolverBindingState,
 	callerKey string,
 	selected *ResolvedAgent,
 ) error {
@@ -918,63 +960,66 @@ func (r *Resolver) commitSuccessfulResolveLocked(
 	if err != nil {
 		return err
 	}
-	r.lastCommittedIteration = sequence
-	r.lastCommittedError = nil
-	r.evictCallerLocked(callerKey, now)
-	r.callers[callerKey] = resolverCaller{
+	state.lastCommittedIteration = sequence
+	state.lastCommittedError = nil
+	r.evictCallerLocked(state, callerKey, now)
+	state.callers[callerKey] = resolverCaller{
 		instanceID: selected.InstanceID,
 		lastSeen:   now,
 		lastUsed:   now,
 	}
-	r.agents[selected.InstanceID] = fallback
+	state.agents[selected.InstanceID] = fallback
 	return nil
 }
 
-func (r *Resolver) evictCallerLocked(callerKey string, now time.Time) {
-	if _, exists := r.callers[callerKey]; exists || len(r.callers) < maxResolverCallerEntries {
+func (r *Resolver) evictCallerLocked(state *resolverBindingState, callerKey string, now time.Time) {
+	if _, exists := state.callers[callerKey]; exists || len(state.callers) < maxResolverCallerEntries {
 		return
 	}
 	oldestKey := ""
 	var oldestTime time.Time
-	for key, state := range r.callers {
-		if oldestKey == "" || state.lastUsed.Before(oldestTime) {
+	for key, caller := range state.callers {
+		if oldestKey == "" || caller.lastUsed.Before(oldestTime) {
 			oldestKey = key
-			oldestTime = state.lastUsed
+			oldestTime = caller.lastUsed
 		}
 	}
 	if oldestKey == "" {
 		return
 	}
-	evicted := r.callers[oldestKey]
-	delete(r.callers, oldestKey)
-	if !r.agentHasOtherCallerLocked(evicted.instanceID) {
-		delete(r.agents, evicted.instanceID)
+	evicted := state.callers[oldestKey]
+	delete(state.callers, oldestKey)
+	if !state.agentHasOtherCallerLocked(evicted.instanceID) {
+		delete(state.agents, evicted.instanceID)
 	}
 }
 
-func (r *Resolver) pruneUnavailableAgentsLocked(candidates []*ResolvedAgent) {
+func (r *Resolver) pruneUnavailableAgentsLocked(
+	state *resolverBindingState,
+	candidates []*ResolvedAgent,
+) {
 	available := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		available[candidate.InstanceID] = struct{}{}
-		if _, cached := r.agents[candidate.InstanceID]; cached {
-			r.agents[candidate.InstanceID] = *candidate
+		if _, cached := state.agents[candidate.InstanceID]; cached {
+			state.agents[candidate.InstanceID] = *candidate
 		}
 	}
-	for id := range r.agents {
+	for id := range state.agents {
 		if _, ok := available[id]; !ok {
-			delete(r.agents, id)
+			delete(state.agents, id)
 		}
 	}
-	for key, state := range r.callers {
-		if _, ok := available[state.instanceID]; !ok {
-			delete(r.callers, key)
+	for key, caller := range state.callers {
+		if _, ok := available[caller.instanceID]; !ok {
+			delete(state.callers, key)
 		}
 	}
 }
 
-func (r *Resolver) agentHasOtherCallerLocked(instanceID string) bool {
-	for _, state := range r.callers {
-		if state.instanceID == instanceID {
+func (state *resolverBindingState) agentHasOtherCallerLocked(instanceID string) bool {
+	for _, caller := range state.callers {
+		if caller.instanceID == instanceID {
 			return true
 		}
 	}

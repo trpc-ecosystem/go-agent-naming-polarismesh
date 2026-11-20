@@ -334,6 +334,7 @@ func TestResolverFallbackPreservesRequestedProtocolBinding(t *testing.T) {
 		Responses: []*model.InstancesResponse{testutil.InstancesResponse(instance)},
 		Errors: []error{
 			nil,
+			nil,
 			errors.New("temporary discovery failure"),
 			errors.New("temporary discovery failure"),
 		},
@@ -350,6 +351,43 @@ func TestResolverFallbackPreservesRequestedProtocolBinding(t *testing.T) {
 	remote, err := resolver.NewRemoteAgentWithBinding(context.Background(), "caller", "HTTP+JSON")
 	require.NoError(t, err)
 	require.NotNil(t, remote)
+}
+
+func TestResolverBindingFailurePreservesOtherCallerFallback(t *testing.T) {
+	config := testutil.ProviderConfig()
+	config.AdvertisePort = 19089
+	card, err := agentcard.NewAgentCard(config)
+	require.NoError(t, err)
+	metadata, err := agentcard.BuildAgentInstanceMetadata(config, card)
+	require.NoError(t, err)
+	instance := testutil.InstanceWithMetadata(
+		"jsonrpc-only",
+		"127.0.0.1",
+		1,
+		true,
+		false,
+		metadata,
+	)
+	lister := &testutil.FakeInstanceLister{
+		Responses: []*model.InstancesResponse{testutil.InstancesResponse(instance)},
+		Errors: []error{
+			nil,
+			nil,
+			errors.New("temporary discovery failure"),
+		},
+	}
+	resolver, err := newTestResolver(lister)
+	require.NoError(t, err)
+
+	_, err = resolver.ResolveWithBinding(context.Background(), "caller-a", "JSONRPC")
+	require.NoError(t, err)
+	_, err = resolver.ResolveWithBinding(context.Background(), "caller-b", "HTTP+JSON")
+	require.ErrorIs(t, err, ErrNoAvailableInstance)
+
+	fallback, err := resolver.ResolveWithBinding(context.Background(), "caller-a", "JSONRPC")
+	require.NoError(t, err)
+	require.Equal(t, "JSONRPC", fallback.ProtocolBinding)
+	require.Equal(t, "http://127.0.0.1:19089/a2a", fallback.Endpoint)
 }
 
 func TestResolverMatchesEquivalentIPv6Representations(t *testing.T) {
@@ -520,7 +558,9 @@ func TestResolverRemoteAgentReResolvesBeforeNewRun(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	chosenID := resolver.callers["caller"].instanceID
+	defaultState := resolver.bindingStateReadOnlyLocked("")
+	require.NotNil(t, defaultState)
+	chosenID := defaultState.callers["caller"].instanceID
 	remaining := second
 	expectedHost := "127.0.0.1:18081"
 	if chosenID == "instance-b" {
@@ -551,8 +591,10 @@ func TestResolverCallerCacheIsBoundedAndForgettable(t *testing.T) {
 		_, err := resolver.Resolve(context.Background(), "caller-"+strconv.Itoa(i))
 		require.NoError(t, err)
 	}
-	require.LessOrEqual(t, len(resolver.callers), maxResolverCallerEntries)
-	require.LessOrEqual(t, len(resolver.agents), maxResolverCallerEntries)
+	defaultState := resolver.bindingStateReadOnlyLocked("")
+	require.NotNil(t, defaultState)
+	require.LessOrEqual(t, len(defaultState.callers), maxResolverCallerEntries)
+	require.LessOrEqual(t, len(defaultState.agents), maxResolverCallerEntries)
 
 	resolver.Forget("caller-0")
 	lister.Responses = nil

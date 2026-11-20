@@ -203,14 +203,7 @@ func (l *Loader) Load(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		result, err := l.skillAPI.Install(&api.SkillInstallRequest{
-			SkillInstallRequest: model.SkillInstallRequest{
-				Namespace: ref.Namespace,
-				Name:      ref.Name,
-				Version:   ref.Version,
-				CacheDir:  root,
-			},
-		})
+		result, err := l.installSkill(ctx, options, ref, root, false)
 		if err != nil {
 			installFailures = append(installFailures, fmt.Errorf("install Skill %s: %w", ref.ID(), err))
 			log.Warnf("skip failed Skill %s: %v", ref.ID(), err)
@@ -232,15 +225,7 @@ func (l *Loader) Load(
 		}
 		if options.CacheMaxAge > 0 && result.CacheHit && !result.Downloaded.IsZero() &&
 			time.Since(result.Downloaded) > options.CacheMaxAge {
-			result, err = l.skillAPI.Install(&api.SkillInstallRequest{
-				SkillInstallRequest: model.SkillInstallRequest{
-					Namespace: ref.Namespace,
-					Name:      ref.Name,
-					Version:   ref.Version,
-					CacheDir:  root,
-					Force:     true,
-				},
-			})
+			result, err = l.installSkill(ctx, options, ref, root, true)
 			if err != nil {
 				installFailures = append(installFailures, fmt.Errorf("refresh stale Skill %s: %w", ref.ID(), err))
 				log.Warnf("skip stale Skill %s after refresh failure: %v", ref.ID(), err)
@@ -359,13 +344,7 @@ func (l *Loader) loadPublishedRefs(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		result, err := l.skillAPI.GetSkillListResult(&api.GetSkillListRequest{
-			GetSkillListRequest: model.GetSkillListRequest{
-				Namespace: options.Namespace,
-				Offset:    offset,
-				Limit:     uint32(limit),
-			},
-		})
+		result, err := l.listPublishedSkills(ctx, options, offset, limit)
 		if err != nil {
 			return nil, fmt.Errorf("list published Skills: %w", err)
 		}
@@ -408,6 +387,90 @@ func (l *Loader) loadPublishedRefs(
 		return refs[i].ref.ID() < refs[j].ref.ID()
 	})
 	return refs, nil
+}
+
+func (l *Loader) listPublishedSkills(
+	ctx context.Context,
+	options Options,
+	offset uint32,
+	limit int,
+) (*api.SkillListResult, error) {
+	callCtx, cancel := skillCallContext(ctx, options.RequestTimeout)
+	defer cancel()
+	return callSkill(callCtx, func() (*api.SkillListResult, error) {
+		return l.skillAPI.GetSkillListResult(&api.GetSkillListRequest{
+			GetSkillListRequest: model.GetSkillListRequest{
+				Namespace: options.Namespace,
+				Offset:    offset,
+				Limit:     uint32(limit),
+			},
+		})
+	})
+}
+
+func (l *Loader) installSkill(
+	ctx context.Context,
+	options Options,
+	ref adapterconfig.SkillRef,
+	root string,
+	force bool,
+) (*model.InstalledSkill, error) {
+	callCtx, cancel := skillCallContext(ctx, options.RequestTimeout)
+	defer cancel()
+	return callSkill(callCtx, func() (*model.InstalledSkill, error) {
+		return l.skillAPI.Install(&api.SkillInstallRequest{
+			SkillInstallRequest: model.SkillInstallRequest{
+				Namespace: ref.Namespace,
+				Name:      ref.Name,
+				Version:   ref.Version,
+				CacheDir:  root,
+				Force:     force,
+			},
+		})
+	})
+}
+
+func skillCallContext(
+	ctx context.Context,
+	configured time.Duration,
+) (context.Context, context.CancelFunc) {
+	timeout, err := serviceRequestTimeout(ctx, configured)
+	if err != nil {
+		callCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		return callCtx, cancel
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+// polaris-go's SkillAPI is synchronous and has no Context parameters. This
+// boundary makes Skill loading honor the caller's remaining deadline; the SDK's
+// own message and download timeouts continue to bound an abandoned request.
+func callSkill[T any](ctx context.Context, call func() (T, error)) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	type result struct {
+		value T
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		value, err := call()
+		done <- result{value: value, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case output := <-done:
+		if err := ctx.Err(); err != nil {
+			var zero T
+			return zero, err
+		}
+		return output.value, output.err
+	}
 }
 
 func validateAgentServiceType(service *model.AgentService) error {
