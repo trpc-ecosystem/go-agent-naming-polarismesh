@@ -8,7 +8,7 @@ RUN_ID="${POLARIS_E2E_RUN_ID:-}"
 NAMESPACE="${POLARIS_E2E_NAMESPACE:-go-agent-naming-e2e}"
 SUITE_FILTER="${POLARIS_E2E_SUITES:-}"
 START_TIMEOUT="${POLARIS_E2E_START_TIMEOUT:-240}"
-GO_BIN="${GO_BIN:-go}"
+BIN_DIR="${POLARIS_E2E_BIN_DIR:-}"
 
 usage() {
     cat <<'EOF'
@@ -22,6 +22,7 @@ Options:
   --suite=list           Comma-separated suites to start:
                          a2a,mcp,skill,a2a-agentcard,agentcard-10,agentcard-03,agentcard-noserve
   --start-timeout=secs   Wait for each suite to print its KEEP marker
+  --bin-dir=DIR          Use prebuilt integration binaries
   -h, --help             Show this help
 
 Each test runs in a detached nohup process. After assertions pass, the test
@@ -38,6 +39,7 @@ for arg in "$@"; do
         --namespace=*) NAMESPACE="${arg#*=}" ;;
         --suite=*) SUITE_FILTER="${arg#*=}" ;;
         --start-timeout=*) START_TIMEOUT="${arg#*=}" ;;
+        --bin-dir=*) BIN_DIR="${arg#*=}" ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: ${arg}" >&2; usage >&2; exit 2 ;;
     esac
@@ -47,13 +49,31 @@ if [[ -z "${SERVER}" ]]; then
     echo "POLARIS_SERVER or --server is required" >&2
     exit 2
 fi
-if [[ "${GO_BIN}" != /* ]]; then
-    GO_BIN="$(command -v "${GO_BIN}" 2>/dev/null || true)"
+package_target=""
+if [[ -f "${ROOT_DIR}/PACKAGE-INFO.txt" ]]; then
+    package_target="$(awk -F= '$1 == "target" {print $2}' "${ROOT_DIR}/PACKAGE-INFO.txt")"
 fi
-if [[ -z "${GO_BIN}" || ! -x "${GO_BIN}" ]]; then
-    echo "Go binary was not found; set GO_BIN" >&2
+host_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+host_arch="$(uname -m)"
+case "${host_arch}" in
+    x86_64|amd64) host_arch="amd64" ;;
+    arm64|aarch64) host_arch="arm64" ;;
+esac
+host_target="${host_os}/${host_arch}"
+if [[ -n "${package_target}" && "${package_target}" != "${host_target}" ]]; then
+    echo "binary package target is ${package_target}, cloud host is ${host_target}" >&2
     exit 2
 fi
+[[ -n "${BIN_DIR}" ]] ||
+    BIN_DIR="${ROOT_DIR}/integration/bin/${host_os}-${host_arch}"
+[[ "${BIN_DIR}" == /* ]] || BIN_DIR="${ROOT_DIR}/${BIN_DIR}"
+for binary in a2a.test mcp.test skill.test a2a-agentcard.test \
+    agentcard-provider agentcard-client; do
+    if [[ ! -x "${BIN_DIR}/${binary}" ]]; then
+        echo "binary not found or not executable: ${BIN_DIR}/${binary}; run make -C integration build" >&2
+        exit 2
+    fi
+done
 if [[ -z "${RUN_ID}" ]]; then
     RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 fi
@@ -90,7 +110,9 @@ write_env POLARIS_E2E_NAMESPACE "${NAMESPACE}"
 write_env POLARIS_E2E_RUN_ID "${RUN_ID}"
 write_env POLARIS_E2E_TIMEOUT "${POLARIS_E2E_TIMEOUT:-30s}"
 write_env POLARIS_E2E_KEEP "1"
-write_env GOCACHE "${GOCACHE:-/tmp/go-agent-naming-retained-cache}"
+write_env POLARIS_E2E_BIN_DIR "${BIN_DIR}"
+write_env POLARIS_E2E_AGENTCARD_PROVIDER_BIN "${BIN_DIR}/agentcard-provider"
+write_env POLARIS_E2E_AGENTCARD_CLIENT_BIN "${BIN_DIR}/agentcard-client"
 chmod 600 "${ENV_FILE}"
 
 if [[ ! -f "${MANIFEST}" ]]; then
@@ -109,21 +131,23 @@ should_start() {
 }
 
 start_process() {
+    local test_description="$*"
     local name="$1"
     local log="$2"
     shift 2
+    local executable="$1"
+    shift
     if ! should_start "${name}"; then
         return 0
     fi
     local ready="${log}.ready"
-    rm -f "${ready}"
     local quoted_args=""
     local arg
     for arg in "$@"; do
         quoted_args="${quoted_args} $(printf '%q' "${arg}")"
     done
     local command
-    command="set -a; source '${ENV_FILE}'; set +a; export POLARIS_E2E_KEEP_READY_FILE='${ready}'; cd '${ROOT_DIR}'; $(printf '%q' "${GO_BIN}") test -mod=readonly -tags=integration -count=1 -v -timeout=0${quoted_args} > '${log}' 2>&1 & child=\$!; trap 'kill -TERM \$child 2>/dev/null; wait \$child; exit 0' TERM INT HUP; wait \$child; exit 0"
+    command="set -a; source '${ENV_FILE}'; set +a; export POLARIS_E2E_KEEP_READY_FILE='${ready}'; cd '${ROOT_DIR}'; $(printf '%q' "${executable}")${quoted_args} > '${log}' 2>&1 & child=\$!; trap 'kill -TERM \$child 2>/dev/null; wait \$child; exit 0' TERM INT HUP; wait \$child; exit 0"
     local label=""
     local pid=""
     if [[ "$(uname -s)" == "Darwin" ]] && command -v launchctl >/dev/null 2>&1; then
@@ -131,12 +155,29 @@ start_process() {
         local existing_pid
         existing_pid="$(launchctl list 2>/dev/null | awk -v label="${label}" '$3 == label {print $1}')"
         if [[ -n "${existing_pid}" && "${existing_pid}" != "-" ]]; then
-            echo "launchctl job ${label} is already running (pid=${existing_pid})" >&2
+            if grep -q '^KEEP:' "${log}" 2>/dev/null; then
+                start="$(ps -p "${existing_pid}" -o lstart= 2>/dev/null | xargs || true)"
+                command_line="$(ps -p "${existing_pid}" -o command= 2>/dev/null | xargs || true)"
+                if [[ -z "${start}" || -z "${command_line}" ]]; then
+                    echo "cannot record existing retained process ${label} (pid=${existing_pid})" >&2
+                    return 1
+                fi
+                if ! awk -F '\t' -v label="${label}" -v pid="${existing_pid}" \
+                    '$1 == label && $2 == pid {found=1} END {exit !found}' "${MANIFEST}"; then
+                    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                        "${label}" "${existing_pid}" "${log}" "${test_description}" "${start}" "${command_line}" >> "${MANIFEST}"
+                fi
+                printf '%s\n' "${RUN_ID}" > "${ready}"
+                printf '%s|%s\n' "${name}" "${existing_pid}"
+                return 0
+            fi
+            echo "launchctl job ${label} is already running without KEEP (pid=${existing_pid})" >&2
             return 1
         fi
         if [[ "${existing_pid}" == "-" ]]; then
             launchctl remove "${label}" >/dev/null 2>&1 || true
         fi
+        rm -f "${ready}"
         if ! launchctl submit -l "${label}" -- /bin/bash -lc "${command}" >/dev/null 2>&1; then
             echo "launchctl submit failed for ${name}" >&2
             return 1
@@ -154,6 +195,7 @@ start_process() {
             return 1
         fi
     else
+        rm -f "${ready}"
         nohup bash -lc "${command}" </dev/null >/dev/null 2>&1 &
         pid=$!
     fi
@@ -172,7 +214,7 @@ start_process() {
         return 1
     fi
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "${label}" "${pid}" "${log}" "$*" "${start}" "${command_line}" >> "${MANIFEST}"
+        "${label}" "${pid}" "${log}" "${test_description}" "${start}" "${command_line}" >> "${MANIFEST}"
     printf '%s|%s\n' "${name}" "${pid}"
 }
 
@@ -207,6 +249,13 @@ wait_for_keep() {
 
 declare -a STARTED=()
 
+suite_package() {
+    case "$1" in
+        agentcard-10|agentcard-03|agentcard-noserve) printf 'a2a-agentcard' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
 start() {
     local name="$1"
     local log="${RET_DIR}/${name}.log"
@@ -214,22 +263,38 @@ start() {
     if ! should_start "${name}"; then
         return 0
     fi
+    local suite
+    suite="$(suite_package "${name}")"
+    local executable="${BIN_DIR}/${suite}.test"
+    local -a command_args=(-test.count=1 -test.v -test.timeout=0)
+    while (($# > 0)); do
+        case "$1" in
+            -run)
+                command_args+=(-test.run "$2")
+                shift 2
+                ;;
+            *)
+                command_args+=("$1")
+                shift
+                ;;
+        esac
+    done
     local record
-    record="$(start_process "${name}" "${log}" "$@")" || return 1
+    record="$(start_process "${name}" "${log}" "${executable}" "${command_args[@]}")" || return 1
     STARTED+=("${record}")
 }
 
-start a2a ./integration/a2a
-start mcp ./integration/mcp
-start skill ./integration/skill
+start a2a
+start mcp
+start skill
 start a2a-agentcard \
-    -run '^TestA2AAgentCardExampleAcrossProcesses$' ./integration/a2a-agentcard
+    -run '^TestA2AAgentCardExampleAcrossProcesses$'
 start agentcard-10 \
-    -run '^TestAgentCardMultiProtocolProvider$/^schema-10$' ./integration/a2a-agentcard
+    -run '^TestAgentCardMultiProtocolProvider$/^schema-10$'
 start agentcard-03 \
-    -run '^TestAgentCardMultiProtocolProvider$/^schema-03$' ./integration/a2a-agentcard
+    -run '^TestAgentCardMultiProtocolProvider$/^schema-03$'
 start agentcard-noserve \
-    -run '^TestAgentCardMultiProtocolProvider$/^no-serve$' ./integration/a2a-agentcard
+    -run '^TestAgentCardMultiProtocolProvider$/^no-serve$'
 
 failures=0
 for record in ${STARTED[@]+"${STARTED[@]}"}; do

@@ -11,7 +11,7 @@ English | [Chinese](test.zh_CN.md)
 
 | Process | Count | Purpose |
 | --- | --- | --- |
-| `go test` test binary | 1 | Publishes the Skill, installs it through SkillAPI, starts the in-process A2A server, discovers the Agent, and runs the scripted model |
+| Prebuilt test binary | 1 | Publishes the Skill, installs it through SkillAPI, starts the in-process A2A server, discovers the Agent, and runs the scripted model |
 | A2A server | In-process | Serves the real A2A handler on a loopback listener |
 | Polaris | External | Provides discovery, Console, and Skill Registry APIs through `POLARIS_SERVER` |
 | LLM | Not used | A scripted `model.Model` drives the real `llmagent` Skill path |
@@ -115,9 +115,21 @@ The Agent Runtime is deregistered, the A2A server is shut down, the AI_AGENT
 service is deleted, and the published Skill is deleted in `t.Cleanup`. The
 shared namespace is retained.
 
+Polaris versions that use second-granularity Skill cache timestamps require
+`create` and `publish` to cross a second boundary. The harness deliberately
+waits for the next publication window so the published status cannot be
+missed by the server's `mtime > last` incremental cache query.
+
+If the Skill endpoint load-balances multiple replicas with different cache
+freshness, the harness opens a fresh SDK per verification attempt and keeps the
+first connection that can both read and download the Skill. The provider
+Runtime reuses that verified connection for installation.
+
 ## Run
 
 ```bash
+make -C integration build
 POLARIS_SERVER=your-polaris-host \
-  go test -tags=integration -count=1 -v -timeout=10m ./integration/skill
+  "integration/bin/$(go env GOOS)-$(go env GOARCH)/skill.test" \
+  -test.count=1 -test.v -test.timeout=10m
 ```
